@@ -25,6 +25,10 @@ class AgentState(TypedDict, total=False):
     conversation_id: str
     user_query: str
 
+    # Documents the caller may retrieve from, resolved from Postgres before
+    # the run starts. None = legacy/unrestricted (tests); [] = no access.
+    snapshot_document_ids: list[str] | None
+
     conversation_context: list[dict[str, Any]]
 
     # Produced by conversation context resolution

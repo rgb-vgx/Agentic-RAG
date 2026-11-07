@@ -15,7 +15,7 @@ class SourceReference(BaseModel):
     """A validated citation pointing back to a retrieved chunk."""
 
     reference_id: str
-    chunk_id: UUID
+    chunk_id: str
     document_id: UUID
     page_start: int | None = None
     page_end: int | None = None

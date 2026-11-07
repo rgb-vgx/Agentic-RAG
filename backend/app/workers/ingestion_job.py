@@ -61,6 +61,8 @@ async def _process_async(document_id: str, tenant_id: str, storage_path: str) ->
             storage_path=record.storage_path,
             file_hash=record.file_hash,
             file_type=record.file_type,
+            # Carries the previous chunk_set_id so reprocess retires it
+            run_metadata=record.run_metadata or {},
         )
 
         pipeline = IngestionPipeline(

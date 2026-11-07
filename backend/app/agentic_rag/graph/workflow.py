@@ -79,6 +79,7 @@ def initial_state(
     user_query: str,
     conversation_context: list[dict[str, Any]] | None = None,
     limits: WorkflowLimits | None = None,
+    document_ids: list[str] | None = None,
 ) -> AgentState:
     """Seed state for one agent run (Section 10)."""
     limits = limits or WorkflowLimits()
@@ -88,6 +89,7 @@ def initial_state(
         tenant_id=tenant_id,
         conversation_id=conversation_id,
         user_query=user_query,
+        snapshot_document_ids=document_ids,
         conversation_context=conversation_context or [],
         resolved_query={},
         query_analysis={},

@@ -11,6 +11,7 @@ import time
 from uuid import uuid4
 
 from app.domain.documents.entities import Document, DocumentStatus
+from app.infrastructure.vectorstores.sparse import SparseEncoder
 from app.ingestion.analyzer import DocumentAnalyzer
 from app.ingestion.chunking.selection import ChunkingSelector
 from app.ingestion.embedding import EmbeddingPipeline
@@ -90,15 +91,24 @@ class IngestionPipeline:
                 document.error_message = "No content extracted from document"
                 return document
 
-            # 5. Embed
+            # 5. Embed (dense) + encode the sparse channel from the same text
             embedded = await self.embedding_pipeline.embed_chunks(all_chunks, document)
+            sparse_encoder = SparseEncoder()
+            sparse_vectors = {
+                chunk.chunk_id: sparse_encoder.encode(
+                    EmbeddingPipeline._embed_text(chunk)
+                )
+                for chunk in all_chunks
+            }
 
             # 6. Index under a fresh chunk-set version (Section 9.5)
             #    Publish-after-verify: the new set must be complete before
             #    the old one is retired — never the other way around.
             chunk_set_id = str(uuid4())
             self.indexer.ensure_collection()
-            written = self.indexer.upsert_chunks(embedded, chunk_set_id=chunk_set_id)
+            written = self.indexer.upsert_chunks(
+                embedded, chunk_set_id=chunk_set_id, sparse_vectors=sparse_vectors
+            )
             if written == 0:
                 document.status = DocumentStatus.FAILED
                 document.error_message = "Indexing wrote no points"

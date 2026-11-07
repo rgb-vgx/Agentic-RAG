@@ -69,7 +69,7 @@ class ChatRequest(BaseModel):
 
 class CitationEvent(BaseModel):
     reference_id: str
-    chunk_id: UUID
+    chunk_id: str
     document_id: UUID
     page_start: int | None = None
     page_end: int | None = None
@@ -188,6 +188,7 @@ async def chat(
                 conversation_id=str(conversation_id),
                 user_query=body.query,
                 conversation_context=conversation_context,
+                document_ids=snapshot_document_ids,
             ):
                 if event["event"] in ("completed", "error"):
                     try:

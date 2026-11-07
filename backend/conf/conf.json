@@ -10,29 +10,29 @@
   "ingestion_queue": "ingestion",
 
   "qdrant_url": "http://localhost:6333",
-  "qdrant_collection": "chunks",
+  "qdrant_collection": "chunks_vi",
 
   "s3_endpoint_url": "http://localhost:9000",
   "s3_bucket": "agentic-rag",
   "s3_region": "us-east-1",
 
   "llm_provider": "openai",
-  "openai_chat_model": "gpt-4o-mini",
+  "openai_chat_model": "qwen3.5:9b",
+  "openai_reasoning_effort": "none",
   "anthropic_chat_model": "claude-sonnet-4-20250514",
-  "llm_default_model": "gpt-4o-mini",
+  "llm_default_model": "qwen3.5:9b",
   "llm_models": [
-    {"id": "gpt-4o-mini", "label": "GPT-4o mini", "provider": "openai"},
-    {"id": "gpt-4o", "label": "GPT-4o", "provider": "openai"},
+    {"id": "qwen3.5:9b", "label": "Qwen3.5 9B (Ollama)", "provider": "openai"},
     {
-      "id": "claude-sonnet-4-20250514",
-      "label": "Claude Sonnet 4",
+      "id": "deepseek-v4.1-flash",
+      "label": "DeepSeek v4.1 Flash (OpenCode)",
       "provider": "anthropic"
     }
   ],
 
   "embedding_provider": "openai",
-  "embedding_model": "text-embedding-3-small",
-  "embedding_dim": 1536,
+  "embedding_model": "Adc05102002/bge-m3-vi-base",
+  "embedding_dim": 1024,
 
   "rerank_provider": "cohere",
   "rerank_model": "rerank-multilingual-v3.0",

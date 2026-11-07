@@ -4,6 +4,7 @@ Bound to a Principal: tenant and owner always come from the token, never
 from client input. Visibility/ownership rules live in DocumentRepository.
 """
 
+import asyncio
 import hashlib
 from typing import Literal
 from uuid import UUID, uuid4
@@ -54,7 +55,8 @@ class DocumentService:
         file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
 
         key = ObjectStorage.key_for(tenant_id, str(document_id), filename)
-        self.storage.upload(key, data, content_type)
+        # boto3 is blocking — keep the event loop free
+        await asyncio.to_thread(self.storage.upload, key, data, content_type)
 
         record = DocumentRecord(
             id=document_id,
@@ -72,13 +74,13 @@ class DocumentService:
         await self.repository.add(record)
 
         # Enqueue background ingestion (RQ) — retried, idempotent by document id
-        self._enqueue(document_id, tenant_id, key)
+        await asyncio.to_thread(self._enqueue, document_id, tenant_id, key)
         return record
 
     def _enqueue(self, document_id: UUID, tenant_id: str, storage_path: str) -> None:
         if self.redis is None:
             return  # wiring deferred — job submission added with worker pass
-        from rq import Queue
+        from rq import Queue, Retry
 
         queue = Queue(settings.ingestion_queue, connection=self.redis)
         queue.enqueue(
@@ -88,7 +90,7 @@ class DocumentService:
             storage_path,
             job_id=f"ingest-{document_id}",  # idempotent: one job per document
             job_timeout=600,
-            retry=3,
+            retry=Retry(max=3, interval=[10, 30, 60]),
         )
 
     async def request_delete(
@@ -98,13 +100,15 @@ class DocumentService:
         result = await self.repository.delete(document_id)
         if result != "deleted":
             return result
-        self._enqueue_delete(document_id, str(self.principal.tenant_id))
+        await asyncio.to_thread(
+            self._enqueue_delete, document_id, str(self.principal.tenant_id)
+        )
         return result
 
     def _enqueue_delete(self, document_id: UUID, tenant_id: str) -> None:
         if self.redis is None:
             return
-        from rq import Queue
+        from rq import Queue, Retry
 
         queue = Queue(settings.ingestion_queue, connection=self.redis)
         queue.enqueue(
@@ -113,5 +117,5 @@ class DocumentService:
             tenant_id,
             job_id=f"delete-{document_id}",
             job_timeout=300,
-            retry=3,
+            retry=Retry(max=3, interval=[10, 30, 60]),
         )

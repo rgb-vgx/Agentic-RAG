@@ -12,6 +12,7 @@ export default function DocumentsPage() {
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scope, setScope] = useState<"org" | "personal">("org");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -40,7 +41,7 @@ export default function DocumentsPage() {
     setError(null);
     try {
       for (const file of Array.from(files)) {
-        await api.uploadDocument(file);
+        await api.uploadDocument(file, scope);
       }
       await refresh();
     } catch (err) {
@@ -67,6 +68,22 @@ export default function DocumentsPage() {
       <h1>Documents</h1>
 
       {error && <div className="error-banner">{error}</div>}
+
+      <div style={{ marginBottom: 12 }}>
+        <label>
+          Visibility:{" "}
+          <select
+            value={scope}
+            onChange={(e) =>
+              setScope(e.target.value as "org" | "personal")
+            }
+            disabled={busy}
+          >
+            <option value="org">Org — shared in tenant</option>
+            <option value="personal">Personal — only me</option>
+          </select>
+        </label>
+      </div>
 
       <div
         className={`upload-zone ${dragging ? "dragging" : ""}`}

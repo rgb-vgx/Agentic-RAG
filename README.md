@@ -39,6 +39,14 @@ docker compose up --build
 # Postgres:  localhost:5436 (agentic/agentic)  |  Qdrant: localhost:6333/6334
 ```
 
+Or use the helper script (stops without touching named volumes):
+
+```bash
+./control.sh start   # build if needed + start everything
+./control.sh seed    # dev tenant/user for AUTH_DISABLED (idempotent)
+./control.sh stop    # or: off
+```
+
 > `docker-compose.yml` uses `backend/.env.example` as its env file. Fill in
 > `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, `GOOGLE_CLIENT_ID` and a
 > non-default `JWT_SECRET` there (or change `env_file`) before expecting
@@ -86,8 +94,15 @@ Integration tests need a disposable PostgreSQL — see below.
   one `NodeContext`/LLM client is built per request and shared by all
   workflow nodes.
 - Embeddings are independent of the chat provider: `EMBEDDING_PROVIDER`
-  is `openai` (needs `OPENAI_API_KEY`/`OPENAI_BASE_URL`) or `local` (no
-  key, deterministic hash vectors for development).
+  is `openai` (any OpenAI-compatible endpoint) or `local` (no key,
+  deterministic hash vectors for development). `EMBEDDING_BASE_URL`
+  overrides the shared `OPENAI_BASE_URL`, so chat can go to Ollama while
+  embeddings go to the TEI service (`http://tei:80/v1` in compose,
+  `http://localhost:8080/v1` outside Docker).
+- The local stack serves `Adc05102002/bge-m3-vi-base` (1024 dims) through
+  `text-embeddings-inference`, and chat through Ollama (`qwen3.5:9b`).
+  Thinking models need `openai_reasoning_effort: "none"` (conf.json) or
+  they spend the whole token budget on reasoning and return empty content.
 - Chat validates citations before emitting token frames, so the client
   never receives ungrounded text.
 
@@ -124,8 +139,10 @@ example an existing `pingpong` DB): the migrations own schema `public`.
 The compose stack includes Qdrant (`localhost:6333` / gRPC `6334`) and the
 API/worker use `qdrant:6333` internally. Retrieval needs it; if Qdrant is
 up but the collection is empty, chat returns the insufficiency message
-rather than crashing. Document upload/ingestion is still a 501 stub, so the
-collection stays empty until that path is wired.
+rather than crashing. The collection is created by the first ingestion
+job, with its dense dimension taken from `embedding_dim` — changing the
+embedding model requires a new collection (this stack uses `chunks_vi`
+at 1024 dims).
 
 ### Model selection
 
@@ -272,9 +289,10 @@ snapshot~~ — done (rag_auth integration, see above).
 
 ## Status
 
-Raw codebase per Proposal v1.1 — the core logic is written; the
-auth/tenancy layer and document/conversation read paths are wired to
-Postgres, while upload→storage→RQ and the chat workflow are still pending.
+Raw codebase per Proposal v1.1 — the full path runs locally:
+upload → MinIO → RQ → parse/chunk/embed/index in Qdrant → chat with
+validated citations. Auth, tenancy and the document/conversation read
+paths are wired to Postgres.
 
 - ✅ Backend modules, Alembic migrations (0001–0003), Docker, 49 unit tests
 - ✅ Auth boundary: Principal JWT, deny-by-default routers, tenancy schema, Principal-bound repositories
@@ -284,21 +302,20 @@ Postgres, while upload→storage→RQ and the chat workflow are still pending.
 - ✅ Development auth bypass (`AUTH_DISABLED`, development-only guard)
 - ✅ Frontend chat (SSE) + documents (upload/poll/delete) pages
 - ✅ Production review round 1 changes: loop bound, publish-after-verify, citation grounding, upload gate, async Qdrant (worker wiring gaps below)
-- ⏳ Upload endpoint is still a validation-only stub (501); the document service and RQ enqueue are not called from the API
-- ⏳ Frontend Google OAuth wiring + Bearer headers on API calls (chat currently needs a token)
-- ⏳ Run the full suite against live Postgres/Qdrant/Redis/S3 + LLM keys (provider calls are covered by fakes in CI)
+- ✅ Upload → object storage → RQ enqueue wired (`POST /documents`), and
+  `DELETE` enqueues the vector/file cleanup job
+- ✅ Dense + sparse vectors written at index time; retrieval filtered by
+  the caller's visibility snapshot
+- ✅ Local models wired: Ollama `qwen3.5:9b` for chat, TEI
+  `bge-m3-vi-base` (1024 dims) for embeddings
+- ⏳ Frontend Google OAuth wiring (AUTH_DISABLED works for local dev;
+  invite-only Google login has no UI yet)
 - ⏳ P1 hardening: ingestion state machine, injection defenses
 - ⏳ Langfuse activation, offline retrieval benchmark
 
 Known gaps (verified in the current code, not exhaustive):
 
-- `process_document` builds the domain `Document` without `run_metadata`,
-  so the previous chunk set is never retired on reprocess.
-- Sparse vectors are encoded at query time but never written at index
-  time — hybrid retrieval currently degrades to dense.
 - Deleting a conversation that has `agent_runs` violates the composite FK
   (no `ON DELETE`), so `DELETE /conversations/{id}` returns 500 after a chat.
-- The delete endpoint sets `status=deleting` but never enqueues the cleanup
-  job, so vectors and stored files are not removed.
 - A client that disconnects before `completed` may leave its run in
   `running`; the finalizer is best-effort under cancellation.

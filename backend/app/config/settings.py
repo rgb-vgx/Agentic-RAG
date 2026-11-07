@@ -95,6 +95,18 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     # Optional Anthropic-compatible endpoint (e.g. a LiteLLM proxy).
     anthropic_base_url: str | None = None
+    # Bearer auth for proxies that expect Authorization: Bearer instead of
+    # the SDK's default x-api-key header (e.g. OpenCode inference).
+    anthropic_auth_token: str = ""
+    # Extra request headers some proxies require, as a JSON object:
+    # ANTHROPIC_EXTRA_HEADERS='{"x-opencode-session":"agentic-rag"}'
+    anthropic_extra_headers: dict[str, str] = Field(default_factory=dict)
+    # Optional extended-thinking fields forwarded to the provider.
+    anthropic_thinking_type: str | None = None   # e.g. "adaptive"
+    anthropic_output_effort: str | None = None   # e.g. "high"
+    # Ollama/Qwen "thinking" models spend the token budget on reasoning and
+    # return empty content unless this is "none".
+    openai_reasoning_effort: str | None = None
     anthropic_chat_model: str = "claude-sonnet-4-20250514"
     # Allowlist exposed to the client. Empty -> only the configured
     # provider/model above is selectable.
@@ -105,6 +117,10 @@ class Settings(BaseSettings):
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 1536
+    # Optional dedicated endpoint (e.g. a TEI container). Falls back to
+    # openai_base_url when unset, so one Ollama/LiteLLM URL can serve both.
+    embedding_base_url: str | None = None
+    embedding_api_key: str = ""
 
     # Reranking
     rerank_provider: str = "cohere"

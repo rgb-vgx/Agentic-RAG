@@ -27,12 +27,16 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
     def __init__(self, api_key: str | None = None, model: str | None = None):
         from openai import AsyncOpenAI
 
-        key = api_key or settings.openai_api_key
-        if not key and not settings.openai_base_url:
-            raise ValueError("OPENAI_API_KEY is required for OpenAI embeddings")
+        key = api_key or settings.embedding_api_key or settings.openai_api_key
+        base_url = settings.embedding_base_url or settings.openai_base_url
+        if not key and not base_url:
+            raise ValueError(
+                "An embedding API key or base URL is required "
+                "(EMBEDDING_API_KEY/EMBEDDING_BASE_URL or OPENAI_API_KEY/OPENAI_BASE_URL)"
+            )
         kwargs: dict = {"api_key": key or "not-needed"}
-        if settings.openai_base_url:
-            kwargs["base_url"] = settings.openai_base_url
+        if base_url:
+            kwargs["base_url"] = base_url
         self._client = AsyncOpenAI(**kwargs)
         self.model = model or settings.embedding_model
         self.dimension = settings.embedding_dim

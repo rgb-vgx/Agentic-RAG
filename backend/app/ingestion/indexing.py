@@ -106,7 +106,7 @@ class QdrantIndexer:
         self,
         items: list[dict[str, Any]],
         chunk_set_id: str,
-        sparse_vectors: dict[str, list[int]] | None = None,
+        sparse_vectors: dict[str, tuple[list[int], list[float]]] | None = None,
     ) -> int:
         """Upsert embedded chunks. `items` comes from EmbeddingPipeline."""
         points: list[PointStruct] = []

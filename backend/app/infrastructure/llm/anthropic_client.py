@@ -18,13 +18,35 @@ class AnthropicClient(BaseLLMClient):
 
     def __init__(self, api_key: str | None = None, default_model: str | None = None):
         key = api_key or settings.anthropic_api_key
-        if not key and not settings.anthropic_base_url:
+        token = settings.anthropic_auth_token
+        if not key and not token and not settings.anthropic_base_url:
             raise ValueError("ANTHROPIC_API_KEY is not set")
-        kwargs: dict = {"api_key": key or "not-needed"}
+        kwargs: dict = {}
+        if token:
+            # Proxies like OpenCode expect Authorization: Bearer
+            kwargs["auth_token"] = token
+        else:
+            kwargs["api_key"] = key or "not-needed"
         if settings.anthropic_base_url:
             kwargs["base_url"] = settings.anthropic_base_url
+        if settings.anthropic_extra_headers:
+            kwargs["default_headers"] = dict(settings.anthropic_extra_headers)
         self._client = AsyncAnthropic(**kwargs)
         self._default_model = default_model or settings.anthropic_chat_model
+
+    @staticmethod
+    def _extra_body(temperature: float) -> dict:
+        """Fields the SDK 2.x signature no longer exposes.
+
+        `temperature` was removed from the typed params (and `stream`) but is
+        still accepted by the Messages API; thinking/effort are proxy-specific.
+        """
+        body: dict = {"temperature": temperature}
+        if settings.anthropic_thinking_type:
+            body["thinking"] = {"type": settings.anthropic_thinking_type}
+        if settings.anthropic_output_effort:
+            body["output_config"] = {"effort": settings.anthropic_output_effort}
+        return body
 
     async def complete(
         self,
@@ -44,8 +66,8 @@ class AnthropicClient(BaseLLMClient):
             model=model or self._default_model,
             system=system or None,
             messages=conversation,
-            temperature=temperature,
             max_tokens=max_tokens,
+            extra_body=self._extra_body(temperature),
         )
         content = "".join(
             block.text for block in response.content if block.type == "text"
@@ -76,8 +98,8 @@ class AnthropicClient(BaseLLMClient):
             model=model or self._default_model,
             system=system or None,
             messages=conversation,
-            temperature=temperature,
             max_tokens=max_tokens,
+            extra_body=self._extra_body(temperature),
         ) as stream:
             async for text in stream.text_stream:
                 yield text

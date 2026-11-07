@@ -33,9 +33,10 @@ export const api = {
       `/documents${knowledgeBaseId ? `?knowledge_base_id=${knowledgeBaseId}` : ""}`
     ),
 
-  uploadDocument: async (file: File) => {
+  uploadDocument: async (file: File, scope: "org" | "personal" = "org") => {
     const form = new FormData();
     form.append("file", file);
+    form.append("scope", scope);
     const response = await fetch(`${PREFIX}/documents`, {
       method: "POST",
       headers: authHeaders(),

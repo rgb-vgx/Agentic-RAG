@@ -26,6 +26,13 @@ class OpenAIClient(BaseLLMClient):
         self._client = AsyncOpenAI(**kwargs)
         self._default_model = default_model or settings.openai_chat_model
 
+    @staticmethod
+    def _extra_body() -> dict:
+        """Provider-specific request fields not modelled by the SDK."""
+        if settings.openai_reasoning_effort:
+            return {"reasoning_effort": settings.openai_reasoning_effort}
+        return {}
+
     async def complete(
         self,
         messages: list[LLMMessage],
@@ -44,6 +51,7 @@ class OpenAIClient(BaseLLMClient):
             messages=[m.model_dump() for m in messages],
             temperature=temperature,
             max_tokens=max_tokens,
+            extra_body=self._extra_body(),
             **kwargs,
         )
         choice = response.choices[0]
@@ -73,6 +81,7 @@ class OpenAIClient(BaseLLMClient):
             temperature=temperature,
             max_tokens=max_tokens,
             stream=True,
+            extra_body=self._extra_body(),
         )
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:

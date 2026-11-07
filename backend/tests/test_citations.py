@@ -8,7 +8,7 @@ from app.domain.retrieval.types import EvidenceGroup, RetrievedEvidence
 
 def make_evidence(reference_id: str, content: str = "") -> RetrievedEvidence:
     return RetrievedEvidence(
-        chunk_id=uuid4(),
+        chunk_id=str(uuid4()) + "-s0-c1",
         document_id=uuid4(),
         content=content or f"content for {reference_id}",
         score=0.9,

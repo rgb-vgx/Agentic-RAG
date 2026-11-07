@@ -96,7 +96,7 @@ async def test_evaluator_llm_failure_falls_back_to_partial():
 
     evidence_group.evidence.append(
         RetrievedEvidence(
-            chunk_id=uuid4(),
+            chunk_id=str(uuid4()) + "-s0-c1",
             document_id=uuid4(),
             content="content",
             score=0.5,

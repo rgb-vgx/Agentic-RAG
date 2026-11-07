@@ -11,13 +11,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
+from redis import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, get_principal, require_role
+from app.config import settings
 from app.domain.documents.entities import DocumentStatus
 from app.infrastructure.database.models import DocumentRecord
 from app.infrastructure.database.repositories import DocumentRepository
 from app.infrastructure.database.session import get_session
+from app.infrastructure.storage.s3 import ObjectStorage
+from app.services.document_service import DocumentService
 
 router = APIRouter()
 
@@ -75,28 +79,52 @@ def _repo(
     return DocumentRepository(session, principal)
 
 
+def _service(
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+) -> DocumentService:
+    """Upload/delete use-case: storage + RQ queue, bound to the Principal."""
+    return DocumentService(
+        session=session,
+        principal=principal,
+        storage=ObjectStorage(),
+        redis_client=Redis.from_url(settings.redis_url),
+    )
+
+
 @router.post("", response_model=DocumentResponse, status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
     scope: Literal["org", "personal"] = Form(...),   # required, no default
-    repo: DocumentRepository = Depends(_repo),
+    knowledge_base_id: str = Form("default"),
+    service: DocumentService = Depends(_service),
 ) -> DocumentResponse:
     """Upload a document and enqueue it for asynchronous ingestion.
 
-    Validates size/format at the boundary (never parses in-request), then
-    the service layer persists to object storage, creates the document row
-    and enqueues an RQ ingestion job. Object storage / Redis wiring is
-    pending, so the endpoint currently stops right after validation.
+    Validates size/format at the boundary (never parses in-request), stores
+    the original, creates the document row and enqueues an RQ job. Parsing,
+    chunking, embedding and indexing all happen in the worker.
     """
-    from app.ingestion.upload_validation import UploadValidationError, validate_upload
+    from app.ingestion.upload_validation import UploadValidationError
 
     data = await file.read()
     try:
-        validate_upload(data, file.filename or "", file.content_type)
+        record = await service.upload(
+            knowledge_base_id=knowledge_base_id,
+            scope=scope,
+            filename=file.filename or "",
+            content_type=file.content_type or "application/octet-stream",
+            data=data,
+        )
     except UploadValidationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-
-    raise HTTPException(status_code=501, detail="Ingestion service not wired yet")
+    except Exception as exc:
+        # storage / queue failure — the request itself was valid
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Upload failed: {exc}",
+        ) from exc
+    return DocumentResponse.from_record(record, service.principal)
 
 
 @router.get("", response_model=DocumentListResponse)
@@ -134,10 +162,10 @@ async def get_document_chunks(
 
 @router.delete("/{document_id}", status_code=204)
 async def delete_document(
-    document_id: UUID, repo: DocumentRepository = Depends(_repo)
+    document_id: UUID, service: DocumentService = Depends(_service)
 ) -> None:
     """Soft-delete: status → DELETING, background job removes vectors + files."""
-    result = await repo.delete(document_id)
+    result = await service.request_delete(document_id)
     if result == "not_found":
         raise not_found()
     if result == "forbidden":

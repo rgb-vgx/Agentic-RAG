@@ -46,13 +46,17 @@ def build_node_context(provider: str, model: str) -> NodeContext:
             "OpenAI is not configured (set OPENAI_API_KEY or OPENAI_BASE_URL)"
         )
     if provider == "anthropic" and not (
-        settings.anthropic_api_key or settings.anthropic_base_url
+        settings.anthropic_api_key
+        or settings.anthropic_auth_token
+        or settings.anthropic_base_url
     ):
         raise ValueError(
             "Anthropic is not configured (set ANTHROPIC_API_KEY or ANTHROPIC_BASE_URL)"
         )
     if settings.embedding_provider == "openai" and not (
-        settings.openai_api_key or settings.openai_base_url
+        settings.openai_api_key
+        or settings.openai_base_url
+        or settings.embedding_base_url
     ):
         raise ValueError(
             "OpenAI embeddings are not configured (set OPENAI_API_KEY/OPENAI_BASE_URL "
@@ -88,6 +92,7 @@ class ChatService:
         conversation_id: str,
         user_query: str,
         conversation_context: list[dict[str, Any]] | None = None,
+        document_ids: list[str] | None = None,
     ) -> AsyncIterator[dict[str, str]]:
         """Yield {"event": ..., "data": json} dicts — the SSE contract.
 
@@ -106,6 +111,7 @@ class ChatService:
             user_query=user_query,
             conversation_context=conversation_context,
             limits=self.ctx.limits,
+            document_ids=document_ids,
         )
 
         try:

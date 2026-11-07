@@ -128,23 +128,31 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
             resolved.get("standalone_query", state.get("user_query", ""))
         )
 
+        # Restrict to documents the caller may see (None = legacy/no filter).
+        # An empty snapshot must never fall back to a tenant-wide search.
+        snapshot = state.get("snapshot_document_ids")
         groups: list[EvidenceGroup] = []
         for task in plan.retrieval_tasks:
-            evidence = await ctx.hybrid_tool.run(
-                query=task.query,
-                tenant_id=state["tenant_id"],
-                query_vector=query_vector,
-                limit=20,
-            )
-            # Re-embed sub-query for tasks that differ from the main query
-            if task.query != resolved.get("standalone_query"):
-                sub_vector = await ctx.embedder.embed_query(task.query)
+            if snapshot is not None and not snapshot:
+                evidence = []
+            else:
                 evidence = await ctx.hybrid_tool.run(
                     query=task.query,
                     tenant_id=state["tenant_id"],
-                    query_vector=sub_vector,
+                    query_vector=query_vector,
                     limit=20,
+                    document_ids=snapshot,
                 )
+                # Re-embed sub-query for tasks that differ from the main query
+                if task.query != resolved.get("standalone_query"):
+                    sub_vector = await ctx.embedder.embed_query(task.query)
+                    evidence = await ctx.hybrid_tool.run(
+                        query=task.query,
+                        tenant_id=state["tenant_id"],
+                        query_vector=sub_vector,
+                        limit=20,
+                        document_ids=snapshot,
+                    )
 
             if plan.requires_reranking and evidence:
                 evidence = await ctx.rerank_tool.run(

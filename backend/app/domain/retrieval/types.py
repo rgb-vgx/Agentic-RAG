@@ -49,7 +49,8 @@ class RetrievalPlan(BaseModel):
 class RetrievedEvidence(BaseModel):
     """Output contract of every retrieval tool (Section 7.2)."""
 
-    chunk_id: UUID
+    # Chunk ids are "<document_id>-s<section>-c<index>" strings, not UUIDs.
+    chunk_id: str
     document_id: UUID
     content: str
     score: float
