@@ -19,3 +19,6 @@ venv/
 
 # Logs
 *.log
+
+# Local test documents (not committed)
+testdata/

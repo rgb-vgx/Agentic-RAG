@@ -173,7 +173,7 @@ batch 64). Both can run alongside the `qwen3.5:9b` chat model — about
    backend sends both. Treat the token as a secret — `.env` is git-ignored.
 3. `./control.sh start` — builds images, runs Alembic, creates the bucket and
    seeds the dev principal when `AUTH_DISABLED=true`.
-4. Open http://localhost:3000/documents, upload a PDF/TXT, wait for status
+4. Open http://localhost:3000/documents, upload a PDF/DOCX/TXT, wait for status
    `ready`, then ask a question in `/chat`.
 
 ### Common issues
@@ -267,6 +267,15 @@ job, with its dense dimension taken from `embedding_dim` — changing the
 embedding model requires a new collection (this stack uses `chunks_vi`
 at 1024 dims).
 
+### Supported upload formats
+
+| Format | Parser | Notes |
+|---|---|---|
+| PDF | PyMuPDF | headings from font size / bold, tables via layout detection |
+| DOCX | python-docx | body order preserved; headings from Word styles plus bold Vietnamese "Chương/Phần/Mục/Điều" paragraphs; tables preserved |
+| TXT / MD | built-in | Markdown `#` headings |
+| DOC | — | rejected at validation — save as `.docx` (legacy binary format) |
+
 ### Model selection
 
 `backend/conf/conf.json` exposes the selectable models through
@@ -308,7 +317,7 @@ at 1024 dims).
 | Testing | 49 pure-logic unit tests + 29 integration tests against a real Postgres (auth, IDOR, visibility, chat, repo + DB constraints) | Authorization bugs are exactly the ones mocks hide |
 | Model selection | Server-side allowlist (`llm_models` / `llm_default_model` in conf.json); chat validates and records provider+model on the run; UI dropdown from `GET /models` | The client can never pick an arbitrary model id |
 | Quality gate | `DocumentQualityReport` runs **before** chunking; `requires_ocr` blocks indexing (§4.4) | Prevents tuned chunking from operating on bad extraction |
-| Upload boundary | `validate_upload` rejects by size (25 MB), magic bytes (`%PDF-`), MIME and extension **before** storage; parsing never runs in the request handler | Quality assessment judges extraction fidelity — security validation is a separate gate |
+| Upload boundary | `validate_upload` rejects by size (25 MB), magic bytes (PDF `%PDF-`, DOCX `PK\x03\x04`), MIME and extension **before** storage; parsing never runs in the request handler. Legacy `.doc` is rejected with a "save as .docx" message | Quality assessment judges extraction fidelity — security validation is a separate gate |
 | Chunk-set publish | **Publish-after-verify**: upsert new set → verify points written → retire old set → store `documents.active_chunk_set_id` (Postgres = source of truth) | Reprocessing can never leave a document without a queryable chunk set |
 | Citation grounding | Two-stage: marker validity against an immutable registry **plus** claim-support — uncited claim sentences are dropped, and if too little supported content remains the answer falls back to an explicit insufficiency message | Stripping `[R99]` alone would leave the hallucinated claim standing |
 | Chunking selection | Constraint-first: generate → evaluate (structural + semantic) → hard-constraint filter → rank; offline retrieval benchmark (Layer 3) calibrates (§5.4) | Never promote a strategy on LLM self-assessment alone |
@@ -322,7 +331,7 @@ at 1024 dims).
 | GET | `/api/v1/health`, `/api/v1/health/ready` | Liveness / readiness (public) |
 | POST | `/api/v1/auth/google` | Google ID token → backend access JWT (public, invite-only) |
 | GET | `/api/v1/models` | Selectable model allowlist + default (authenticated) |
-| POST | `/api/v1/documents` | Multipart upload (`file` + `scope`); validation only today — storage/RQ wiring returns 501 |
+| POST | `/api/v1/documents` | Multipart upload (`file` + `scope` + optional `knowledge_base_id`); accepts PDF, DOCX, TXT/MD, stores to MinIO and enqueues an RQ ingestion job |
 | GET | `/api/v1/documents` | List visible documents (org + own personal) |
 | GET/DELETE | `/api/v1/documents/{id}` | Visible docs only / soft-delete (gated by `can_manage`) |
 | GET | `/api/v1/documents/{id}/chunks` | Visibility-gated chunk listing (content still a stub) |

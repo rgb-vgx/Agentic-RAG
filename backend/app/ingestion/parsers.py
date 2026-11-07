@@ -1,5 +1,6 @@
 """Document parsers: file bytes → Canonical Document IR (Section 4.1)."""
 
+import re
 from abc import ABC, abstractmethod
 
 from app.ingestion.ir import BlockType, BoundingBox, CanonicalDocument, DocumentBlock
@@ -167,12 +168,133 @@ class PdfParser(BaseParser):
             return []
 
 
+class DocxParser(BaseParser):
+    """Word (.docx) parser using python-docx.
+
+    Preserves body order (paragraphs and tables interleaved). Heading levels
+    come from built-in styles ("Heading N", "Title"); Vietnamese legal
+    documents often use plain bold paragraphs such as "Điều 1." or
+    "CHƯƠNG I", so those are detected heuristically as well.
+    """
+
+    name = "python-docx"
+    version = "1.0"
+    supported_types = ("docx",)
+
+    _HEADING_STYLE_RE = re.compile(r"heading\s*(\d+)", re.IGNORECASE)
+    _VN_HEADING_RE = re.compile(
+        r"^(chương|phần|mục|điều)\s+[ivxlcdm\d]+", re.IGNORECASE
+    )
+
+    def parse(self, data: bytes, document_id: str, filename: str) -> CanonicalDocument:
+        import io
+
+        from docx import Document as DocxDocument
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+
+        document = DocxDocument(io.BytesIO(data))
+        blocks: list[DocumentBlock] = []
+
+        for child in document.element.body.iterchildren():
+            tag = child.tag.rsplit("}", 1)[-1]
+
+            if tag == "p":
+                paragraph = Paragraph(child, document)
+                text = paragraph.text.strip()
+                if not text:
+                    continue
+                block_type, level = self._classify(paragraph, text)
+                metadata: dict = {}
+                if paragraph.style is not None:
+                    metadata["style"] = paragraph.style.name
+                if level is not None:
+                    metadata["heading_level"] = level
+                blocks.append(
+                    DocumentBlock(
+                        block_id=f"{document_id}-b{len(blocks)}",
+                        block_type=block_type,
+                        text=text,
+                        page_start=1,
+                        page_end=1,
+                        block_index=len(blocks),
+                        metadata=metadata,
+                    )
+                )
+
+            elif tag == "tbl":
+                rows = self._table_rows(Table(child, document))
+                if not rows:
+                    continue
+                blocks.append(
+                    DocumentBlock(
+                        block_id=f"{document_id}-b{len(blocks)}",
+                        block_type=BlockType.TABLE,
+                        text="\n".join(" | ".join(row) for row in rows),
+                        page_start=1,
+                        page_end=1,
+                        block_index=len(blocks),
+                        table_data=rows,
+                    )
+                )
+
+        return CanonicalDocument(
+            document_id=document_id,
+            filename=filename,
+            file_type="docx",
+            blocks=blocks,
+            total_pages=1,
+            parser_name=self.name,
+            parser_version=self.version,
+        )
+
+    def _classify(self, paragraph, text: str) -> tuple[BlockType, int | None]:
+        style = (paragraph.style.name if paragraph.style is not None else "") or ""
+        match = self._HEADING_STYLE_RE.search(style)
+        if match:
+            return BlockType.HEADING, max(1, min(int(match.group(1)), 6))
+
+        lowered = style.strip().lower()
+        if lowered == "title":
+            return BlockType.HEADING, 1
+        if lowered in ("subtitle", "heading"):
+            return BlockType.HEADING, 2
+        if lowered.startswith("list"):
+            return BlockType.LIST_ITEM, None
+
+        if self._looks_like_vn_heading(paragraph, text):
+            level = 1 if text.lower().startswith(("chương", "phần")) else 2
+            return BlockType.HEADING, level
+
+        return BlockType.PARAGRAPH, None
+
+    def _looks_like_vn_heading(self, paragraph, text: str) -> bool:
+        if len(text) > 200 or not self._VN_HEADING_RE.match(text):
+            return False
+        return self._is_bold(paragraph) or len(text) < 80
+
+    @staticmethod
+    def _is_bold(paragraph) -> bool:
+        bolds = [run.bold for run in paragraph.runs if run.text.strip()]
+        if bolds:
+            return all(bold is True for bold in bolds)
+        style = paragraph.style
+        return bool(style is not None and style.font is not None and style.font.bold)
+
+    @staticmethod
+    def _table_rows(table) -> list[list[str]]:
+        rows = [
+            [cell.text.strip() for cell in row.cells] for row in table.rows
+        ]
+        return [row for row in rows if any(row)]
+
+
 PARSER_REGISTRY: dict[str, BaseParser] = {}
 
 
 def get_parser(file_type: str) -> BaseParser:
     normalized = file_type.lower().lstrip(".")
-    for parser in (PdfParser(), TxtParser()):
+    for parser in (PdfParser(), TxtParser(), DocxParser()):
         if normalized in parser.supported_types:
             return parser
     raise ValueError(f"No parser registered for file type: {file_type}")

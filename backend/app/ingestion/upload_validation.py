@@ -15,9 +15,10 @@ ALLOWED_MIME = {
     "application/pdf",
     "text/plain",
     "text/markdown",
-    "application/octet-stream",  # browsers sometimes send this for .txt
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/octet-stream",  # browsers sometimes send this for .txt/.docx
 }
-ALLOWED_EXTENSIONS = {"pdf", "txt", "md", "markdown"}
+ALLOWED_EXTENSIONS = {"pdf", "txt", "md", "markdown", "docx"}
 
 
 class UploadValidationError(ValueError):
@@ -39,6 +40,10 @@ def validate_upload(data: bytes, filename: str, content_type: str | None) -> Val
         raise UploadValidationError("Filename must have an extension", 400)
 
     file_type = filename.rsplit(".", 1)[-1].lower()
+    if file_type == "doc":
+        raise UploadValidationError(
+            "Legacy .doc is not supported — save the file as .docx", 415
+        )
     if file_type not in ALLOWED_EXTENSIONS:
         raise UploadValidationError(
             f"Unsupported file type '{file_type}' — allowed: {sorted(ALLOWED_EXTENSIONS)}",
@@ -66,6 +71,16 @@ def validate_upload(data: bytes, filename: str, content_type: str | None) -> Val
         if pages is not None and pages > MAX_PDF_PAGES:
             raise UploadValidationError(
                 f"PDF has {pages} pages (limit {MAX_PDF_PAGES})", 413
+            )
+    elif file_type == "docx":
+        # .docx is a ZIP container — refuse renamed non-ZIP files
+        if not data.startswith(b"PK\x03\x04"):
+            raise UploadValidationError(
+                "File content does not match DOCX format", 415
+            )
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise UploadValidationError(
+                f"DOCX exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit", 413
             )
     else:
         if len(data) > MAX_TXT_BYTES:

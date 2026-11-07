@@ -101,12 +101,12 @@ export default function DocumentsPage() {
       >
         {busy
           ? "Uploading…"
-          : "Drop PDF or TXT files here, or click to browse"}
+          : "Drop PDF, DOCX or TXT files here, or click to browse"}
         <input
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.txt,.md,text/plain,application/pdf"
+          accept=".pdf,.docx,.txt,.md,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           style={{ display: "none" }}
           onChange={(e) => {
             if (e.target.files?.length) void uploadFiles(e.target.files);
