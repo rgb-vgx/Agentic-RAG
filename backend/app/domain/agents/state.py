@@ -47,6 +47,10 @@ class AgentState(TypedDict, total=False):
     final_answer: str | None
     citations: list[dict[str, Any]]
 
+    # Set by validate_citations when the answer had to fall back to an
+    # insufficiency message (claim-support check failed)
+    validation_fallback: bool
+
     errors: list[dict[str, Any]]
 
 
