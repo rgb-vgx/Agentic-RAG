@@ -47,10 +47,18 @@ class DocumentListResponse(BaseModel):
 async def upload_document(file: UploadFile = File(...)) -> DocumentResponse:
     """Upload a document and enqueue it for asynchronous ingestion.
 
-    The service layer persists the file to object storage, creates the
-    document row and enqueues an RQ ingestion job. Wiring is added in the
-    services pass; this endpoint defines the contract.
+    Validates size/format at the boundary (never parses in-request), then
+    the service layer persists to object storage, creates the document row
+    and enqueues an RQ ingestion job.
     """
+    from app.ingestion.upload_validation import UploadValidationError, validate_upload
+
+    data = await file.read()
+    try:
+        validate_upload(data, file.filename or "", file.content_type)
+    except UploadValidationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
     raise HTTPException(status_code=501, detail="Ingestion service not wired yet")
 
 

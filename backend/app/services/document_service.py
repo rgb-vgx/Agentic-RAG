@@ -34,6 +34,12 @@ class DocumentService:
         data: bytes,
     ) -> DocumentRecord:
         document_id = uuid4()
+
+        # Defense in depth: validate even when called outside the API layer
+        from app.ingestion.upload_validation import validate_upload
+
+        validate_upload(data, filename, content_type)
+
         file_hash = hashlib.sha256(data).hexdigest()
         file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
 
