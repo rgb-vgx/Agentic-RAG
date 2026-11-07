@@ -3,9 +3,11 @@ import re
 import time
 import uuid
 
+import httpx
 import jwt
 
-from app.auth import issue_access_token
+from app.auth import cached_active_checker, issue_access_token
+from app.main import _db_is_active, create_app
 from tests.integration.conftest import AUTH, FAKE_IDENTITIES, PUBLIC_PATHS
 
 
@@ -184,13 +186,32 @@ async def test_removal_from_tenant_revokes_access(world, seed):
     """Membership gone -> token no longer resolves to an active member."""
     from sqlalchemy import text
 
-    a1 = world.actors["a1"]
+    # a_admin owns no documents, so the documents -> memberships FK allows
+    # removing the membership (offboarding requires reassigning documents).
+    admin = world.actors["a_admin"]
     async with world.engine.begin() as conn:
         await conn.execute(
             text("DELETE FROM memberships WHERE user_id = :uid"),
-            {"uid": a1.user_id},
+            {"uid": admin.user_id},
         )
 
-    async with world.client(a1) as c:
+    async with world.client(admin) as c:
         r = await c.get("/api/v1/conversations")
         assert r.status_code == 401
+
+
+async def test_dev_auth_disabled_allows_anonymous(world):
+    """AUTH_DISABLED=true: no token, but a dev Principal is still bound."""
+    app = create_app(
+        auth=AUTH,
+        google_verifier=world.app.state.google_verifier,
+        active_checker=cached_active_checker(_db_is_active, ttl_seconds=0),
+        engine=world.engine,
+        auth_disabled=True,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/api/v1/conversations")
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "total": 0}

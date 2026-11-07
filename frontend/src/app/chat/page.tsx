@@ -3,9 +3,10 @@
 /** Chat page — sends queries, consumes the SSE stream, renders sources. */
 
 import { useEffect, useRef, useState } from "react";
+import { api } from "@/lib/api";
 import { streamChat } from "@/lib/stream";
 import { useChatStore } from "@/store/chat";
-import type { StreamEvent, SourceReference } from "@/lib/types";
+import type { ModelOption, StreamEvent, SourceReference } from "@/lib/types";
 
 const STATUS_LABELS: Record<string, string> = {
   resolve_context: "Resolving conversation context…",
@@ -35,8 +36,46 @@ export default function ChatPage() {
   } = useChatStore();
 
   const [input, setInput] = useState("");
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [model, setModel] = useState("");
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .createConversation()
+      .then((conversation) => {
+        if (!cancelled) setConversationId(conversation.id);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [setError]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listModels()
+      .then(({ items, default: defaultModel }) => {
+        if (cancelled) return;
+        setModels(items);
+        setModel(defaultModel);
+      })
+      .catch(() => {
+        // The catalogue is behind auth; until Bearer wiring lands the
+        // selector stays empty and the server applies its default model.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -45,6 +84,10 @@ export default function ChatPage() {
   async function send() {
     const query = input.trim();
     if (!query || isStreaming) return;
+    if (!conversationId) {
+      setError("Conversation is not ready yet");
+      return;
+    }
 
     setInput("");
     setError(null);
@@ -57,7 +100,11 @@ export default function ChatPage() {
 
     try {
       await streamChat(
-        { conversation_id: crypto.randomUUID(), query },
+        {
+          conversation_id: conversationId,
+          query,
+          model: model || undefined,
+        },
         (event: StreamEvent) => {
           switch (event.event) {
             case "status": {
@@ -103,11 +150,29 @@ export default function ChatPage() {
     <>
       <header className="chat-header">
         <h1>Document Q&amp;A</h1>
-        {isStreaming && statusNode && (
-          <span className="status-line">
-            {STATUS_LABELS[statusNode] ?? statusNode}
-          </span>
-        )}
+        <div className="chat-controls">
+          {isStreaming && statusNode && (
+            <span className="status-line">
+              {STATUS_LABELS[statusNode] ?? statusNode}
+            </span>
+          )}
+          <select
+            className="model-select"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            disabled={isStreaming || models.length === 0}
+            aria-label="Model"
+          >
+            {models.length === 0 && (
+              <option value="">Default model</option>
+            )}
+            {models.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label} ({option.provider})
+              </option>
+            ))}
+          </select>
+        </div>
       </header>
 
       {error && <div className="error-banner">{error}</div>}

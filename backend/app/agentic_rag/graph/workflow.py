@@ -16,9 +16,8 @@ from app.agentic_rag.graph.nodes import (
     analyze_node,
     evaluate_node,
     plan_node,
-    retrieve_node,
     resolve_context_node,
-    route_after_analyze,
+    retrieve_node,
     route_node,
     should_continue,
     synthesize_node,
@@ -108,16 +107,18 @@ def initial_state(
 async def stream_run(graph, state: AgentState):
     """Yield (event, payload) tuples from the graph stream.
 
-    Events: status (node updates), done (final state).
-    Token events come from the synthesizer at the service layer — the graph
-    stream itself only carries structured node results.
+    Events: status (node updates), done (final state). The final state is
+    accumulated from the update stream — the graph has no checkpointer, so
+    ``aget_state`` cannot be used here.
     """
+    final_state: dict[str, Any] = dict(state)
     async for step in graph.astream(state, stream_mode="updates"):
         for node_name, update in step.items():
-            yield ("status", {"node": node_name, "update": _slim(update)})
+            if update:
+                final_state.update(update)
+            yield ("status", {"node": node_name, "update": _slim(update or {})})
 
-    final = await graph.aget_state(state)
-    yield ("done", final.values if hasattr(final, "values") else {})
+    yield ("done", final_state)
 
 
 def _slim(update: dict) -> dict:

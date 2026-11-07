@@ -27,7 +27,13 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
     def __init__(self, api_key: str | None = None, model: str | None = None):
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(api_key=api_key or settings.openai_api_key)
+        key = api_key or settings.openai_api_key
+        if not key and not settings.openai_base_url:
+            raise ValueError("OPENAI_API_KEY is required for OpenAI embeddings")
+        kwargs: dict = {"api_key": key or "not-needed"}
+        if settings.openai_base_url:
+            kwargs["base_url"] = settings.openai_base_url
+        self._client = AsyncOpenAI(**kwargs)
         self.model = model or settings.embedding_model
         self.dimension = settings.embedding_dim
 
@@ -70,5 +76,6 @@ def get_embedding_provider(provider: str | None = None) -> BaseEmbeddingProvider
     if name == "openai":
         return OpenAIEmbeddingProvider()
     if name == "local":
-        return LocalHashEmbeddingProvider()
+        # Keep the local dimension aligned with the Qdrant collection.
+        return LocalHashEmbeddingProvider(dimension=settings.embedding_dim)
     raise ValueError(f"Unknown embedding provider: {name}")

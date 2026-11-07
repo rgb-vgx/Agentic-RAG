@@ -1,0 +1,51 @@
+{
+  "app_env": "development",
+  "app_debug": false,
+  "api_v1_prefix": "/api/v1",
+  "cors_origins": ["http://localhost:3000"],
+
+  "database_url": "postgresql+asyncpg://agentic:agentic@localhost:5436/agentic_rag",
+
+  "redis_url": "redis://localhost:6379/0",
+  "ingestion_queue": "ingestion",
+
+  "qdrant_url": "http://localhost:6333",
+  "qdrant_collection": "chunks",
+
+  "s3_endpoint_url": "http://localhost:9000",
+  "s3_bucket": "agentic-rag",
+  "s3_region": "us-east-1",
+
+  "llm_provider": "openai",
+  "openai_chat_model": "gpt-4o-mini",
+  "anthropic_chat_model": "claude-sonnet-4-20250514",
+  "llm_default_model": "gpt-4o-mini",
+  "llm_models": [
+    {"id": "gpt-4o-mini", "label": "GPT-4o mini", "provider": "openai"},
+    {"id": "gpt-4o", "label": "GPT-4o", "provider": "openai"},
+    {
+      "id": "claude-sonnet-4-20250514",
+      "label": "Claude Sonnet 4",
+      "provider": "anthropic"
+    }
+  ],
+
+  "embedding_provider": "openai",
+  "embedding_model": "text-embedding-3-small",
+  "embedding_dim": 1536,
+
+  "rerank_provider": "cohere",
+  "rerank_model": "rerank-multilingual-v3.0",
+
+  "jwt_issuer": "rag-api",
+  "jwt_audience": "rag-web",
+  "jwt_access_ttl_seconds": 900,
+  "auth_revocation_ttl_seconds": 60,
+  "auth_disabled": false,
+
+  "langfuse_enabled": false,
+  "langfuse_host": "http://localhost:3001",
+
+  "agent_max_retrieval_iterations": 3,
+  "agent_max_decomposition_tasks": 5
+}

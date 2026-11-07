@@ -14,6 +14,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Annotated
 from uuid import UUID
 
 import jwt
@@ -104,6 +105,11 @@ def _unauthorized() -> HTTPException:
 
 
 async def get_principal(request: Request) -> Principal:
+    # Development-only bypass wired by create_app(). It still returns a
+    # Principal so repositories keep enforcing tenant/ownership rules.
+    if getattr(request.app.state, "auth_disabled", False):
+        return request.app.state.dev_principal
+
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise _unauthorized()
@@ -118,7 +124,9 @@ async def get_principal(request: Request) -> Principal:
 
 
 def require_role(role: str):
-    async def dep(p: Principal = Depends(get_principal)) -> Principal:
+    async def dep(
+        p: Annotated[Principal, Depends(get_principal)],
+    ) -> Principal:
         if role not in p.roles:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
         return p

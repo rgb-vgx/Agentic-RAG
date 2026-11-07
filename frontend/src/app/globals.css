@@ -86,6 +86,27 @@ a {
   margin: 0;
 }
 
+.chat-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.model-select {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.model-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .messages {
   flex: 1;
   overflow-y: auto;

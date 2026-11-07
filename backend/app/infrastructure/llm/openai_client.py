@@ -1,6 +1,6 @@
 """OpenAI LLM client (openai>=1.x async SDK)."""
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from openai import AsyncOpenAI
 
@@ -17,7 +17,13 @@ class OpenAIClient(BaseLLMClient):
     provider = "openai"
 
     def __init__(self, api_key: str | None = None, default_model: str | None = None):
-        self._client = AsyncOpenAI(api_key=api_key or settings.openai_api_key)
+        key = api_key or settings.openai_api_key
+        if not key and not settings.openai_base_url:
+            raise ValueError("OPENAI_API_KEY is not set")
+        kwargs: dict = {"api_key": key or "not-needed"}
+        if settings.openai_base_url:
+            kwargs["base_url"] = settings.openai_base_url
+        self._client = AsyncOpenAI(**kwargs)
         self._default_model = default_model or settings.openai_chat_model
 
     async def complete(

@@ -35,6 +35,7 @@ from app.auth import (
 )
 from app.config import settings
 from app.main import _db_is_active, create_app
+from tests.fakes import fake_node_context
 
 BACKEND = Path(__file__).resolve().parents[2]
 DSN = os.environ.get(
@@ -154,7 +155,10 @@ async def world(engine):
         # removed member must lose access immediately in tests)
         active_checker=cached_active_checker(_db_is_active, ttl_seconds=0),
         engine=engine,
+        auth_disabled=False,
     )
+    # Deterministic LLM/retriever/embedder — no API keys or Qdrant needed.
+    app.state.chat_context_factory = lambda provider, model: fake_node_context()
     w = World(app, engine)
     async with engine.begin() as conn:
         await conn.execute(
@@ -250,6 +254,10 @@ async def seed(world):
                     email=f"{actor.name}@example.com",
                 )
             )
+        # users before memberships (no relationship -> no automatic ordering)
+        await session.flush()
+
+        for actor in (a1, a2, a_admin, b1, b_admin):
             session.add(
                 MembershipRecord(
                     user_id=actor.user_id,
@@ -257,6 +265,10 @@ async def seed(world):
                     roles=sorted(actor.roles),
                 )
             )
+
+        # memberships must exist before documents reference them (the ORM has
+        # no relationship between the two, so it cannot order the flush)
+        await session.flush()
 
         docs = {
             "doc_a1_personal": uuid.uuid4(),
@@ -298,6 +310,8 @@ async def seed(world):
                 title="Conversation A1",
             )
         )
+        # conversation must exist before its message (same composite-FK reason)
+        await session.flush()
         session.add(
             MessageRecord(
                 conversation_id=conv_a1, tenant_id=tenant_a, user_id=a1.user_id,

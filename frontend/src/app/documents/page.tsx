@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { DOCUMENTS_POLL_INTERVAL_MS } from "@/lib/config";
 import type { DocumentItem } from "@/lib/types";
 
 export default function DocumentsPage() {
@@ -30,7 +31,7 @@ export default function DocumentsPage() {
       (d) => d.status === "uploaded" || d.status === "processing"
     );
     if (!hasPending) return;
-    const timer = setInterval(() => void refresh(), 3000);
+    const timer = setInterval(() => void refresh(), DOCUMENTS_POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [refresh, documents]);
 

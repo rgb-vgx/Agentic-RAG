@@ -1,6 +1,7 @@
 # Agentic RAG — full local stack (Section 16.4)
 #   docker compose up --build
 # Frontend: http://localhost:3000  |  API: http://localhost:8000/docs
+# Postgres is exposed on localhost:5436 (5432/5433/5434 are already used).
 
 services:
   postgres:
@@ -10,7 +11,7 @@ services:
       POSTGRES_PASSWORD: agentic
       POSTGRES_DB: agentic_rag
     ports:
-      - "5432:5432"
+      - "5436:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -57,6 +58,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
       S3_ENDPOINT_URL: http://minio:9000
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
     ports:
       - "8000:8000"
     depends_on:
@@ -80,6 +82,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
       S3_ENDPOINT_URL: http://minio:9000
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy

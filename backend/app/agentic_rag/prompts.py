@@ -26,13 +26,13 @@ RESOLVE_QUERY = Prompt(
 You resolve a user's new message against the conversation history.
 
 Given the recent history and the latest user message, produce JSON:
-{
+{{
   "standalone_query": "<the message rewritten as a self-contained question>",
   "intent": "<short intent label>",
   "entities": ["<named entities>"],
   "constraints": {{"<key>": "<value>"}},
   "is_follow_up": <true|false>
-}
+}}
 
 Rules:
 - Preserve the user's intent and every important condition.

@@ -35,7 +35,8 @@ async def test_listing_visibility_per_actor(world, seed):
         "a2": {seed.doc_a1_org, seed.doc_a2_org},
         "a_admin": {seed.doc_a1_org, seed.doc_a2_org},
         "b1": {seed.doc_b1_org, seed.doc_b1_personal},
-        "b_admin": {seed.doc_b1_org, seed.doc_b1_personal},
+        # admin does NOT outrank personal documents owned by someone else
+        "b_admin": {seed.doc_b1_org},
     }
     for who, doc_ids in expected.items():
         async with world.client(world.actors[who]) as c:
@@ -104,25 +105,29 @@ async def test_messages_history_private(world, seed):
 async def test_chat_persists_user_message_and_reports_run(world, seed):
     events = await chat(world, "a1", seed.conv_a1)
 
-    # contract: run_started carries run_id + snapshot, then a terminal error
-    # event because the workflow is not wired yet (fail fast, never hang)
+    # contract: run_started -> status/token -> completed
     assert "run_started" in events
-    assert "error" in events
+    assert "completed" in events
+    assert "error" not in events
     assert events["run_started"]["snapshot_document_ids"]
 
     async with world.client(world.actors["a1"]) as c:
         r = await c.get(f"/api/v1/conversations/{seed.conv_a1}/messages")
     contents = [m["content"] for m in r.json()]
     assert "q" in contents          # the user's message was persisted
+    assert "Fake answer." in contents  # the assistant message was persisted
     assert "SECRET-answer-42" in contents
 
-    # the run row belongs to the caller
+    # the run row belongs to the caller and finished successfully
     rows = await world.sql(
-        "SELECT tenant_id, user_id FROM agent_runs ORDER BY created_at DESC"
+        "SELECT tenant_id, user_id, status, model_name "
+        "FROM agent_runs ORDER BY created_at DESC"
     )
     assert rows, "chat must create an agent_runs row"
     assert rows[0][0] == seed.tenant_a
     assert str(rows[0][1]) == str(world.actors["a1"].user_id)
+    assert rows[0][2] == "completed"
+    assert rows[0][3] == events["run_started"]["model"]
 
 
 async def test_deleted_document_leaves_snapshot(world, seed):
@@ -133,3 +138,35 @@ async def test_deleted_document_leaves_snapshot(world, seed):
     events = await chat(world, "a1", seed.conv_a1)
     assert str(seed.doc_a1_org) not in events["run_started"]["snapshot_document_ids"]
     assert str(seed.doc_a1_personal) in events["run_started"]["snapshot_document_ids"]
+
+
+async def test_model_catalogue_and_chat_model_validation(world, seed):
+    async with world.client(world.actors["a1"]) as c:
+        r = await c.get("/api/v1/models")
+        assert r.status_code == 200
+        body = r.json()
+        ids = {item["id"] for item in body["items"]}
+        assert body["default"] in ids
+
+        # a model outside the server allowlist is rejected
+        bad = await c.post(
+            "/api/v1/chat",
+            json={
+                "conversation_id": str(seed.conv_a1),
+                "query": "q",
+                "model": "not-an-allowed-model",
+            },
+        )
+        assert bad.status_code == 400
+
+    # a valid selection is echoed and recorded on the run
+    events = await chat(world, "a1", seed.conv_a1, model=body["default"])
+    assert events["run_started"]["model"] == body["default"]
+
+    rows = await world.sql(
+        "SELECT model_name, model_provider FROM agent_runs ORDER BY created_at DESC"
+    )
+    assert rows[0][0] == body["default"]
+    assert rows[0][1] == next(
+        item["provider"] for item in body["items"] if item["id"] == body["default"]
+    )

@@ -163,7 +163,11 @@ class ConversationRecord(Base, TenantMixin):
     )
 
     messages: Mapped[list["MessageRecord"]] = relationship(
-        back_populates="conversation", cascade="all, delete-orphan"
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        # messages has both a single FK and a composite (conversation,
+        # tenant, user) FK; pin the relationship to the single one.
+        foreign_keys="MessageRecord.conversation_id",
     )
 
     __table_args__ = (
@@ -197,7 +201,8 @@ class MessageRecord(Base, TenantMixin):
     )
 
     conversation: Mapped[ConversationRecord] = relationship(
-        back_populates="messages"
+        back_populates="messages",
+        foreign_keys="MessageRecord.conversation_id",
     )
 
     __table_args__ = (

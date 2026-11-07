@@ -22,16 +22,18 @@ __all__ = [
 ]
 
 
-def get_llm_client(provider: str | None = None) -> BaseLLMClient:
+def get_llm_client(
+    provider: str | None = None, model: str | None = None
+) -> BaseLLMClient:
     from app.config import settings
 
     name = (provider or settings.llm_provider).lower()
     if name == "anthropic":
         from app.infrastructure.llm.anthropic_client import AnthropicClient
 
-        return AnthropicClient()
+        return AnthropicClient(default_model=model)
     if name == "openai":
         from app.infrastructure.llm.openai_client import OpenAIClient
 
-        return OpenAIClient()
+        return OpenAIClient(default_model=model)
     raise ValueError(f"Unknown LLM provider: {name}")

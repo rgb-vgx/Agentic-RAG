@@ -1,5 +1,6 @@
 """FastAPI application entrypoint."""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -18,6 +19,7 @@ from app.auth import (
 from app.config import settings
 from app.infrastructure.database.session import set_engine
 from app.infrastructure.observability.logging import configure_logging
+from app.services.chat_service import build_node_context
 
 
 @asynccontextmanager
@@ -44,6 +46,7 @@ def create_app(
     google_verifier: GoogleVerifier | None = None,
     active_checker: ActiveChecker | None = None,
     engine: AsyncEngine | None = None,
+    auth_disabled: bool | None = None,
 ) -> FastAPI:
     """App factory.
 
@@ -52,6 +55,10 @@ def create_app(
     """
     if engine is not None:
         set_engine(engine)
+
+    disabled = settings.auth_disabled if auth_disabled is None else auth_disabled
+    if disabled and settings.app_env != "development":
+        raise RuntimeError("AUTH_DISABLED is only allowed when APP_ENV=development")
 
     app = FastAPI(
         title="Agentic RAG API",
@@ -77,9 +84,24 @@ def create_app(
     app.state.google_verifier = google_verifier or make_google_verifier(
         settings.google_client_id
     )
-    app.state.active_checker = active_checker or cached_active_checker(
-        _db_is_active, ttl_seconds=settings.auth_revocation_ttl_seconds
+    app.state.auth_disabled = disabled
+    app.state.dev_principal = Principal(
+        user_id=settings.dev_user_id,
+        tenant_id=settings.dev_tenant_id,
+        roles=frozenset({"member", "admin"}),
     )
+    if disabled:
+        app.state.active_checker = None
+        logging.getLogger(__name__).warning(
+            "AUTH_DISABLED=true: Bearer authentication is bypassed "
+            "(development only)"
+        )
+    else:
+        app.state.active_checker = active_checker or cached_active_checker(
+            _db_is_active, ttl_seconds=settings.auth_revocation_ttl_seconds
+        )
+    # Tests override this to inject deterministic LLM/retriever fakes.
+    app.state.chat_context_factory = build_node_context
 
     app.include_router(api_router, prefix=settings.api_v1_prefix)
     return app

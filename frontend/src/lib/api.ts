@@ -1,14 +1,19 @@
 /** REST client for the Agentic RAG API. */
 
-import type { ConversationItem, DocumentItem } from "./types";
+import { authHeaders } from "./auth";
+import { API_PREFIX } from "./config";
+import type { ConversationItem, DocumentItem, ModelOption } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const PREFIX = `${API_URL}/api/v1`;
+const PREFIX = API_PREFIX;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${PREFIX}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
   });
   if (!response.ok) {
     const body = await response.text().catch(() => "");
@@ -33,6 +38,7 @@ export const api = {
     form.append("file", file);
     const response = await fetch(`${PREFIX}/documents`, {
       method: "POST",
+      headers: authHeaders(),
       body: form, // fetch sets multipart boundary itself
     });
     if (!response.ok) {
@@ -43,6 +49,10 @@ export const api = {
 
   deleteDocument: (id: string) =>
     request<void>(`/documents/${id}`, { method: "DELETE" }),
+
+  // Models
+  listModels: () =>
+    request<{ items: ModelOption[]; default: string }>("/models"),
 
   // Conversations
   listConversations: () =>

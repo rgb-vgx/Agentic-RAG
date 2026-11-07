@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from qdrant_client import AsyncQdrantClient
+from qdrant_client.http.exceptions import UnexpectedResponse
 from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue, SparseVector
 
 from app.domain.retrieval.types import RetrievedEvidence
@@ -182,22 +183,28 @@ class HybridRetriever:
         limit: int = 20,
         **filter_kwargs,
     ) -> list[RawHit]:
-        dense_hits = await self.search_dense_async(
-            dense_vector, tenant_id, limit=limit * 2, **filter_kwargs
-        )
-        sparse_hits = (
-            await self.search_sparse(
-                sparse_indices or [],
-                sparse_values or [],
-                tenant_id,
-                limit=limit * 2,
-                **filter_kwargs,
+        try:
+            dense_hits = await self.search_dense_async(
+                dense_vector, tenant_id, limit=limit * 2, **filter_kwargs
             )
-            if sparse_indices
-            else []
-        )
-        fused = self.rrf_fuse(dense_hits, sparse_hits)
-        return fused[:limit]
+            sparse_hits = (
+                await self.search_sparse(
+                    sparse_indices or [],
+                    sparse_values or [],
+                    tenant_id,
+                    limit=limit * 2,
+                    **filter_kwargs,
+                )
+                if sparse_indices
+                else []
+            )
+        except UnexpectedResponse as exc:
+            if getattr(exc, "status_code", None) == 404:
+                # Collection not created yet (fresh deployment, no documents).
+                return []
+            raise
+
+        return self.rrf_fuse(dense_hits, sparse_hits)[:limit]
 
     @staticmethod
     def to_evidence(hit: RawHit, reference_id: str = "") -> RetrievedEvidence:

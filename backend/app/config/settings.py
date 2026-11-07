@@ -1,9 +1,35 @@
-"""Application settings loaded from environment variables."""
+"""Application settings loaded from conf.json and environment variables.
 
+Precedence (highest first): constructor args, environment variables,
+`.env`, `conf/conf.json`, field defaults. Secrets (API keys, JWT secret,
+S3 credentials) belong in the environment, never in conf.json.
+"""
+
+import os
 from functools import lru_cache
+from pathlib import Path
+from uuid import UUID
 
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, Field, field_validator
+from pydantic_settings import (
+    BaseSettings,
+    JsonConfigSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+_DEFAULT_CONF_FILE = Path(__file__).resolve().parents[2] / "conf" / "conf.json"
+CONF_FILE = Path(os.environ.get("APP_CONFIG_FILE") or _DEFAULT_CONF_FILE)
+
+_LLM_PROVIDERS = {"openai", "anthropic"}
+
+
+class LLMModelOption(BaseModel):
+    """One model the client is allowed to select."""
+
+    id: str
+    label: str = ""
+    provider: str = "openai"
 
 
 class Settings(BaseSettings):
@@ -11,7 +37,29 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        json_file=str(CONF_FILE),
+        json_file_encoding="utf-8",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Keep env overrides above conf.json; check secrets last."""
+        sources: list[PydanticBaseSettingsSource] = [
+            init_settings,
+            env_settings,
+            dotenv_settings,
+        ]
+        if CONF_FILE.exists():
+            sources.append(JsonConfigSettingsSource(settings_cls))
+        sources.append(file_secret_settings)
+        return tuple(sources)
 
     # Application
     app_env: str = "development"
@@ -41,9 +89,17 @@ class Settings(BaseSettings):
     # LLM
     llm_provider: str = "openai"
     openai_api_key: str = ""
+    # Optional OpenAI-compatible endpoint (e.g. a LiteLLM proxy).
+    openai_base_url: str | None = None
     openai_chat_model: str = "gpt-4o-mini"
     anthropic_api_key: str = ""
+    # Optional Anthropic-compatible endpoint (e.g. a LiteLLM proxy).
+    anthropic_base_url: str | None = None
     anthropic_chat_model: str = "claude-sonnet-4-20250514"
+    # Allowlist exposed to the client. Empty -> only the configured
+    # provider/model above is selectable.
+    llm_models: list[LLMModelOption] = Field(default_factory=list)
+    llm_default_model: str = ""
 
     # Embeddings
     embedding_provider: str = "openai"
@@ -63,6 +119,11 @@ class Settings(BaseSettings):
     jwt_audience: str = "rag-web"
     jwt_access_ttl_seconds: int = 900
     auth_revocation_ttl_seconds: int = 60
+    # Development-only: skip Bearer authentication. Refused when
+    # APP_ENV != development (see create_app).
+    auth_disabled: bool = False
+    dev_user_id: UUID = UUID("00000000-0000-0000-0000-000000000001")
+    dev_tenant_id: UUID = UUID("00000000-0000-0000-0000-000000000002")
 
     # Observability
     langfuse_enabled: bool = False
@@ -80,6 +141,43 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.startswith("["):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @field_validator("llm_models")
+    @classmethod
+    def _validate_models(cls, models: list[LLMModelOption]) -> list[LLMModelOption]:
+        seen: set[str] = set()
+        for model in models:
+            if model.provider not in _LLM_PROVIDERS:
+                raise ValueError(
+                    f"unsupported provider for model {model.id!r}: {model.provider}"
+                )
+            if model.id in seen:
+                raise ValueError(f"duplicate model id: {model.id}")
+            seen.add(model.id)
+        return models
+
+    def available_models(self) -> list[LLMModelOption]:
+        """Selectable models: the conf allowlist, or the configured default."""
+        if self.llm_models:
+            return list(self.llm_models)
+        configured = (
+            self.anthropic_chat_model
+            if self.llm_provider == "anthropic"
+            else self.openai_chat_model
+        )
+        return [
+            LLMModelOption(
+                id=configured, label=configured, provider=self.llm_provider
+            )
+        ]
+
+    def default_model_option(self) -> LLMModelOption:
+        """The configured default, falling back to the first allowed model."""
+        options = self.available_models()
+        for option in options:
+            if option.id == self.llm_default_model:
+                return option
+        return options[0]
 
 
 @lru_cache

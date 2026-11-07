@@ -10,16 +10,18 @@
  * Each parsed frame is handed to `onEvent`.
  */
 
+import { authHeaders } from "./auth";
+import { API_PREFIX } from "./config";
 import type { StreamEvent } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const PREFIX = `${API_URL}/api/v1`;
+const PREFIX = API_PREFIX;
 
 export interface ChatStreamRequest {
   conversation_id: string;
   query: string;
   knowledge_base_id?: string;
   use_agentic?: boolean | null;
+  model?: string | null;
 }
 
 export async function streamChat(
@@ -29,7 +31,7 @@ export async function streamChat(
 ): Promise<void> {
   const response = await fetch(`${PREFIX}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(request),
     signal,
   });

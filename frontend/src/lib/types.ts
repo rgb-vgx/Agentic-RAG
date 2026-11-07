@@ -30,6 +30,12 @@ export interface ConversationItem {
   updated_at?: string | null;
 }
 
+export interface ModelOption {
+  id: string;
+  label: string;
+  provider: string;
+}
+
 export interface SourceReference {
   reference_id: string;
   chunk_id: string;
@@ -51,7 +57,15 @@ export interface ChatMessage {
 
 /** SSE event payloads (mirrors backend app/api/v1/chat.py contract). */
 export type StreamEvent =
-  | { event: "run_started"; data: { run_id: string } }
+  | {
+      event: "run_started";
+      data: {
+        run_id: string;
+        model?: string;
+        model_provider?: string;
+        snapshot_document_ids?: string[];
+      };
+    }
   | { event: "status"; data: { node: string; update?: Record<string, unknown> } }
   | { event: "token"; data: { delta: string } }
   | { event: "citation"; data: SourceReference }

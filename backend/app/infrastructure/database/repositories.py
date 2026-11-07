@@ -10,6 +10,8 @@ tests/integration/test_repos_direct.py:
   conversations/messages/runs = same tenant AND same user.
 """
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
@@ -298,6 +300,8 @@ class AgentRunRepository:
         *,
         query: str,
         snapshot: dict[UUID, UUID] | None = None,
+        model_provider: str = "openai",
+        model_name: str = "",
     ) -> AgentRunRecord | None:
         # Ownership check happens first: never create a run for someone else's
         # conversation, and never spend tokens on a request that will be denied.
@@ -310,6 +314,8 @@ class AgentRunRepository:
             user_id=self.principal.user_id,
             query=query,
             snapshot={str(k): str(v) for k, v in (snapshot or {}).items()},
+            model_provider=model_provider,
+            model_name=model_name,
         )
         self.session.add(record)
         await self.session.commit()
