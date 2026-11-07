@@ -94,9 +94,24 @@ class IngestionPipeline:
             embedded = await self.embedding_pipeline.embed_chunks(all_chunks, document)
 
             # 6. Index under a fresh chunk-set version (Section 9.5)
+            #    Publish-after-verify: the new set must be complete before
+            #    the old one is retired — never the other way around.
             chunk_set_id = str(uuid4())
             self.indexer.ensure_collection()
-            self.indexer.upsert_chunks(embedded, chunk_set_id=chunk_set_id)
+            written = self.indexer.upsert_chunks(embedded, chunk_set_id=chunk_set_id)
+            if written == 0:
+                document.status = DocumentStatus.FAILED
+                document.error_message = "Indexing wrote no points"
+                return document
+
+            # Retire the previous set only now that the new one is queryable
+            previous_chunk_set = document.run_metadata.get("chunk_set_id")
+            if previous_chunk_set and previous_chunk_set != chunk_set_id:
+                self.indexer.deactivate_chunk_set(
+                    previous_chunk_set, document.tenant_id
+                )
+
+            document.active_chunk_set_id = chunk_set_id
 
             document.status = (
                 DocumentStatus.DEGRADED

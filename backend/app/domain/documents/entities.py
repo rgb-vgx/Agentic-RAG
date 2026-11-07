@@ -64,5 +64,9 @@ class Document(BaseModel):
     # Ingestion run snapshot (chunk_set_id, strategy_runs, timing) — Section 9.7
     run_metadata: dict = Field(default_factory=dict)
 
+    # Postgres is the source of truth for which chunk set is queryable.
+    # Qdrant's payload `active` flag is defense-in-depth, not the truth.
+    active_chunk_set_id: str | None = None
+
     created_at: str | None = None
     updated_at: str | None = None

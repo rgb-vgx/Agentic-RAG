@@ -77,6 +77,8 @@ async def _process_async(document_id: str, tenant_id: str, storage_path: str) ->
             result.quality_report.model_dump() if result.quality_report else None
         )
         record.run_metadata = result.run_metadata
+        if result.active_chunk_set_id:
+            record.active_chunk_set_id = result.active_chunk_set_id
         await session.commit()
 
         logger.info(

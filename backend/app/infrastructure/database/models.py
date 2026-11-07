@@ -5,6 +5,7 @@ included so every run can reproduce its results.
 """
 
 from datetime import datetime
+import uuid
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -46,9 +47,9 @@ class TenantMixin:
 class DocumentRecord(Base, TenantMixin):
     __tablename__ = "documents"
 
-    id: Mapped = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     knowledge_base_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    user_id: Mapped = mapped_column(UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
 
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(1024), nullable=False)
@@ -60,6 +61,9 @@ class DocumentRecord(Base, TenantMixin):
 
     quality_report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     run_metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    # Source of truth for the queryable chunk set (publish-after-verify)
+    active_chunk_set_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Document relationship metadata (Section 9.6)
     related_document_ids: Mapped[list] = mapped_column(JSONB, default=list)
@@ -89,8 +93,8 @@ class DocumentRecord(Base, TenantMixin):
 class ConversationRecord(Base, TenantMixin):
     __tablename__ = "conversations"
 
-    id: Mapped = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id: Mapped = mapped_column(UUID(as_uuid=True), nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     knowledge_base_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     title: Mapped[str] = mapped_column(String(256), default="New conversation")
     created_at: Mapped[datetime] = mapped_column(
@@ -108,8 +112,8 @@ class ConversationRecord(Base, TenantMixin):
 class MessageRecord(Base, TenantMixin):
     __tablename__ = "messages"
 
-    id: Mapped = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    conversation_id: Mapped = mapped_column(
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE")
     )
     role: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -144,9 +148,9 @@ class MessageRecord(Base, TenantMixin):
 class AgentRunRecord(Base, TenantMixin):
     __tablename__ = "agent_runs"
 
-    id: Mapped = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    conversation_id: Mapped = mapped_column(UUID(as_uuid=True), nullable=False)
-    user_id: Mapped = mapped_column(UUID(as_uuid=True), nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
 
     query: Mapped[str] = mapped_column(Text, nullable=False)
     resolved_query: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -188,8 +192,8 @@ class AgentRunRecord(Base, TenantMixin):
 class ChunkingRunRecord(Base, TenantMixin):
     __tablename__ = "chunking_runs"
 
-    id: Mapped = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    document_id: Mapped = mapped_column(UUID(as_uuid=True), nullable=False)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     chunk_set_id: Mapped[str] = mapped_column(String(64), nullable=False)
 
     strategy_name: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -208,8 +212,8 @@ class ChunkingRunRecord(Base, TenantMixin):
 class IndexingRunRecord(Base, TenantMixin):
     __tablename__ = "indexing_runs"
 
-    id: Mapped = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    document_id: Mapped = mapped_column(UUID(as_uuid=True), nullable=False)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     chunk_set_id: Mapped[str] = mapped_column(String(64), nullable=False)
 
     embedding_model: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -232,7 +236,7 @@ class IndexingRunRecord(Base, TenantMixin):
 class EvaluationQuestionRecord(Base, TenantMixin):
     __tablename__ = "evaluation_questions"
 
-    id: Mapped = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     dataset: Mapped[str] = mapped_column(String(64), default="default")
     question: Mapped[str] = mapped_column(Text, nullable=False)
 
