@@ -7,6 +7,7 @@ Implements `Proposal Design.md` (Technical Design v1.1).
 Agentic-RAG/
 ├── Proposal Design.md              # Technical design v1.1 (EN)
 ├── Proposal Design (Tiếng Việt).md # Bản tiếng Việt, line-aligned
+├── README.vi.md                    # Vietnamese translation
 ├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + API + worker + frontend
 ├── backend/                        # Python 3.12 + FastAPI
 │   ├── app/
@@ -21,7 +22,7 @@ Agentic-RAG/
 │   │   └── workers/                # RQ ingestion jobs
 │   ├── migrations/                 # Alembic (0001–0003)
 │   ├── conf/conf.json              # Non-secret runtime config (env overrides)
-│   └── tests/                      # 49 unit tests (no infra) + integration/ (29, real Postgres)
+│   └── tests/                      # 54 unit tests (no infra) + integration/ (29, real Postgres)
 └── frontend/                       # Next.js 15 (App Router) + TypeScript
     ├── conf/conf.json              # Frontend config, bundled at build time
     └── src/
@@ -314,7 +315,7 @@ at 1024 dims).
 | Document visibility | `scope ∈ {org, personal}`: org shared inside the tenant, personal owner-only (admins do not outrank it); "not yours" == 404 | No existence oracle; DB composite FKs are the last line of defence |
 | Frontend | **Next.js App Router**, `fetch` + `ReadableStream` for SSE (not `EventSource`) | `EventSource` cannot POST; manual SSE frame parsing in `lib/stream.ts` |
 | State management | **zustand** for chat store; plain `useState` for documents | Chat needs fine-grained incremental updates; documents are simple CRUD |
-| Testing | 49 pure-logic unit tests + 29 integration tests against a real Postgres (auth, IDOR, visibility, chat, repo + DB constraints) | Authorization bugs are exactly the ones mocks hide |
+| Testing | 54 pure-logic unit tests + 29 integration tests against a real Postgres (auth, IDOR, visibility, chat, repo + DB constraints) | Authorization bugs are exactly the ones mocks hide |
 | Model selection | Server-side allowlist (`llm_models` / `llm_default_model` in conf.json); chat validates and records provider+model on the run; UI dropdown from `GET /models` | The client can never pick an arbitrary model id |
 | Quality gate | `DocumentQualityReport` runs **before** chunking; `requires_ocr` blocks indexing (§4.4) | Prevents tuned chunking from operating on bad extraction |
 | Upload boundary | `validate_upload` rejects by size (25 MB), magic bytes (PDF `%PDF-`, DOCX `PK\x03\x04`), MIME and extension **before** storage; parsing never runs in the request handler. Legacy `.doc` is rejected with a "save as .docx" message | Quality assessment judges extraction fidelity — security validation is a separate gate |
@@ -426,7 +427,7 @@ upload → MinIO → RQ → parse/chunk/embed/index in Qdrant → chat with
 validated citations. Auth, tenancy and the document/conversation read
 paths are wired to Postgres.
 
-- ✅ Backend modules, Alembic migrations (0001–0003), Docker, 49 unit tests
+- ✅ Backend modules, Alembic migrations (0001–0003), Docker, 54 unit tests
 - ✅ Auth boundary: Principal JWT, deny-by-default routers, tenancy schema, Principal-bound repositories
 - ✅ 29 integration tests (auth/IDOR/visibility/models/chat/repo+DB constraints) — require a real Postgres
 - ✅ Model selection: server allowlist, validated `model` on chat, recorded on the run, UI dropdown

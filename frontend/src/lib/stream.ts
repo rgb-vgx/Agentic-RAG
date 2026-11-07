@@ -51,11 +51,13 @@ export async function streamChat(
 
       buffer += decoder.decode(value, { stream: true });
 
-      // SSE frames are separated by a blank line
-      let separatorIndex: number;
-      while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
-        const rawFrame = buffer.slice(0, separatorIndex);
-        buffer = buffer.slice(separatorIndex + 2);
+      // SSE frames are separated by a blank line. sse-starlette emits CRLF
+      // (and the spec allows both), so split on either line ending.
+      const frameSeparator = /\r?\n\r?\n/;
+      let separator: RegExpExecArray | null;
+      while ((separator = frameSeparator.exec(buffer)) !== null) {
+        const rawFrame = buffer.slice(0, separator.index);
+        buffer = buffer.slice(separator.index + separator[0].length);
         const parsed = parseFrame(rawFrame);
         if (parsed) onEvent(parsed);
       }

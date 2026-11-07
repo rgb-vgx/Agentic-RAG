@@ -22,3 +22,6 @@ venv/
 
 # Local test documents (not committed)
 testdata/
+
+# Playwright MCP artifacts
+.playwright-mcp/

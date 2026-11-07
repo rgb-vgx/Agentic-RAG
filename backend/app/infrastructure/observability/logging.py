@@ -6,7 +6,9 @@ import structlog
 
 
 def configure_logging(level: int = logging.INFO) -> None:
-    logging.basicConfig(level=level, format="%(message)s", stream=True)
+    # No `stream=True` here: basicConfig expects a file-like object and
+    # defaults to stderr, which is what we want.
+    logging.basicConfig(level=level, format="%(message)s")
 
     structlog.configure(
         processors=[
