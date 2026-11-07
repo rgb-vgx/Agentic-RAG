@@ -39,7 +39,9 @@ docker compose up --build
 # Postgres:  localhost:5436 (agentic/agentic)  |  Qdrant: localhost:6333/6334
 ```
 
-Or use the helper script (stops without touching named volumes):
+Or use the helper script (stops without touching named volumes). See
+[Operating the local stack](#operating-the-local-stack-controlsh) for the
+full command reference:
 
 ```bash
 ./control.sh start   # build if needed + start everything
@@ -70,6 +72,127 @@ cd backend && uv run pytest tests --ignore=tests/integration
 ```
 
 Integration tests need a disposable PostgreSQL — see below.
+
+## Operating the local stack (`control.sh`)
+
+`control.sh` wraps `docker compose` and keeps state across restarts. All data
+lives in named volumes, so stopping the stack never deletes documents,
+conversations, vectors, or the embedding-model cache.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `./control.sh start` | `docker compose up -d --build`, then ensures the MinIO bucket and — when `AUTH_DISABLED=true` — seeds the dev tenant/user/membership. |
+| `./control.sh stop` / `off` | Stops every container. Volumes and data are preserved. |
+| `./control.sh restart [service]` | Restarts all services or one (`api`, `worker`, `frontend`, `tei`, …). It does **not** reload changed env vars; use `start` (or `up -d`) after editing `.env`. |
+| `./control.sh status` | `docker compose ps`. |
+| `./control.sh logs [service]` | Follows logs, optionally for one service. |
+| `./control.sh seed` | Idempotently inserts the dev tenant, user and membership used by `AUTH_DISABLED`. |
+| `./control.sh bucket` | Creates the `agentic-rag` bucket in MinIO if missing. |
+| `./control.sh embeddings tei\|ollama` | Switches the embedding backend and recreates `api` + `worker` (see below). |
+
+### Ports
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| API / Swagger | http://localhost:8000/docs |
+| Qdrant dashboard | http://localhost:6333/dashboard |
+| MinIO API / console | localhost:9000 / http://localhost:9002 |
+| TEI (embeddings) | http://localhost:8080 |
+| Postgres | localhost:5436 (`agentic` / `agentic`, db `agentic_rag`) |
+| Redis | localhost:6379 |
+| Ollama (on the host) | http://localhost:11434 |
+
+The MinIO console is on **9002** because `127.0.0.1:9001` is used by another
+local service (penpot in this setup). If it is free on your machine, change
+the mapping back in `docker-compose.yml`.
+
+### Persistence
+
+| Volume | Contents |
+|---|---|
+| `agentic-rag_pgdata` | Postgres: users, documents, conversations, runs |
+| `agentic-rag_qdrant_data` | Vector collections (`chunks_vi`, `chunks_ollama`) |
+| `agentic-rag_minio_data` | Original uploaded files |
+| `agentic-rag_tei_data` | Hugging Face cache for the TEI embedding model |
+
+`stop` only stops containers. Do not run `docker compose down -v` unless you
+intend to delete all data. `start` reuses the same volumes, so re-running it
+is safe.
+
+### Embedding backend: TEI (default) vs Ollama
+
+Two encoders are available. Each writes to its own Qdrant collection because
+vectors from different models are not comparable.
+
+| Backend | Model | Endpoint | Collection |
+|---|---|---|---|
+| `tei` (default) | `Adc05102002/bge-m3-vi-base`, 1024 dims | `http://tei:80/v1` | `chunks_vi` |
+| `ollama` | `bge-m3`, 1024 dims | `http://host.docker.internal:11434/v1` | `chunks_ollama` |
+
+```bash
+./control.sh embeddings ollama   # use Ollama bge-m3
+./control.sh embeddings tei      # back to the GPU TEI service
+```
+
+The command rewrites `RAG_EMBEDDING_*` / `RAG_QDRANT_COLLECTION` in the
+git-ignored root `.env` and recreates `api` + `worker`. Switching does **not**
+migrate vectors: documents must be re-ingested (upload again) to be
+retrievable under the new backend. The TEI service keeps running in both
+modes (~1.4 GB VRAM); `docker compose stop tei` frees it.
+
+Measured on an RTX 3060: TEI GPU ≈ 1.7 ms/text, Ollama ≈ 6.7 ms/text (warm,
+batch 64). Both can run alongside the `qwen3.5:9b` chat model — about
+7.7 GB / 12 GB VRAM total.
+
+### First-run checklist
+
+1. Pull the Ollama models used by the stack:
+   ```bash
+   ollama pull qwen3.5:9b
+   ollama pull bge-m3
+   ```
+2. Root `.env` (git-ignored) for local development:
+   ```
+   AUTH_DISABLED=true
+   RAG_EMBEDDING_PROVIDER=openai
+   RAG_EMBEDDING_MODEL=Adc05102002/bge-m3-vi-base
+   RAG_EMBEDDING_DIM=1024
+   RAG_EMBEDDING_BASE_URL=http://tei:80/v1
+   RAG_QDRANT_COLLECTION=chunks_vi
+   ```
+   Optional Anthropic-compatible proxy (enables `deepseek-v4.1-flash`):
+   ```
+   RAG_ANTHROPIC_BASE_URL=https://opencode.ai/inference/go/anthropic
+   RAG_ANTHROPIC_AUTH_TOKEN=<token>
+   RAG_ANTHROPIC_EXTRA_HEADERS={"x-opencode-session":"agentic-rag"}
+   ```
+   The proxy requires the `x-opencode-session` header and Bearer auth; the
+   backend sends both. Treat the token as a secret — `.env` is git-ignored.
+3. `./control.sh start` — builds images, runs Alembic, creates the bucket and
+   seeds the dev principal when `AUTH_DISABLED=true`.
+4. Open http://localhost:3000/documents, upload a PDF/TXT, wait for status
+   `ready`, then ask a question in `/chat`.
+
+### Common issues
+
+- **Upload returns 502 with an FK violation** — the dev principal is not
+  seeded. Run `./control.sh seed` (requires `AUTH_DISABLED=true` and
+  `APP_ENV=development`).
+- **Chat returns 503 "OpenAI is not configured"** — Ollama is not reachable
+  from the container. Check `extra_hosts: host.docker.internal:host-gateway`
+  and `OPENAI_BASE_URL=http://host.docker.internal:11434/v1`.
+- **Ingestion fails with `batch size 64 > maximum allowed batch size 32`** —
+  TEI must start with `--max-client-batch-size 64` (already set in
+  `docker-compose.yml`).
+- **Chat answers "insufficient evidence" after switching embedding backend** —
+  the document's vectors live in the other collection; re-ingest the document.
+- **`model '<name>' not found`** — `ollama pull <name>` and check
+  `GET /api/v1/models` against `backend/conf/conf.json`.
+- **`restart` does not apply env changes** — restarts keep the old container
+  environment; run `./control.sh start` or `docker compose up -d <service>`.
 
 ## Configuration
 

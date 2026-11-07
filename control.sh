@@ -47,6 +47,40 @@ seed_dev() {
   echo "Dev tenant/user/membership seeded."
 }
 
+# Rewrite the RAG_EMBEDDING_* / RAG_QDRANT_COLLECTION lines in .env
+set_embedding_cfg() {
+  local model="$1" base_url="$2" collection="$3"
+  touch .env
+  python3 - "$model" "$base_url" "$collection" <<'PY'
+import sys
+from pathlib import Path
+
+model, base_url, collection = sys.argv[1:4]
+values = {
+    "RAG_EMBEDDING_PROVIDER": "openai",
+    "RAG_EMBEDDING_MODEL": model,
+    "RAG_EMBEDDING_DIM": "1024",
+    "RAG_EMBEDDING_BASE_URL": base_url,
+    "RAG_QDRANT_COLLECTION": collection,
+}
+path = Path(".env")
+lines = path.read_text().splitlines() if path.exists() else []
+seen: set[str] = set()
+out: list[str] = []
+for line in lines:
+    key = line.split("=", 1)[0]
+    if key in values:
+        out.append(f"{key}={values[key]}")
+        seen.add(key)
+    else:
+        out.append(line)
+for key, value in values.items():
+    if key not in seen:
+        out.append(f"{key}={value}")
+path.write_text("\n".join(out).rstrip() + "\n")
+PY
+}
+
 usage() {
   cat <<'EOF'
 Usage: ./control.sh <command>
@@ -58,6 +92,9 @@ Usage: ./control.sh <command>
   logs [svc]      Follow logs, optionally for one service
   seed            Seed the dev tenant/user/membership (AUTH_DISABLED principal)
   bucket          Create the S3/MinIO bucket if it does not exist
+  embeddings BACKEND
+                  Switch embedding backend: tei (bge-m3-vi-base, GPU) or
+                  ollama (bge-m3). Each backend has its own Qdrant collection.
 
 Endpoints after start:
   API       http://localhost:8000/docs
@@ -104,6 +141,26 @@ case "$CMD" in
     ;;
   bucket)
     ensure_bucket
+    ;;
+  embeddings)
+    case "${1:-}" in
+      tei)
+        set_embedding_cfg \
+          "Adc05102002/bge-m3-vi-base" "http://tei:80/v1" "chunks_vi"
+        ;;
+      ollama)
+        set_embedding_cfg \
+          "bge-m3" "http://host.docker.internal:11434/v1" "chunks_ollama"
+        ;;
+      *)
+        echo "Usage: ./control.sh embeddings <tei|ollama>" >&2
+        exit 1
+        ;;
+    esac
+    dc up -d api worker
+    echo
+    echo "Embedding backend switched. Documents must be (re)ingested into"
+    echo "the new collection before they can be retrieved."
     ;;
   -h | --help | help)
     usage

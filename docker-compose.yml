@@ -41,8 +41,13 @@ services:
   # Text Embeddings Inference — serves the Vietnamese BGE-M3 embedding model.
   # OpenAI-compatible at /v1/embeddings (used by EMBEDDING_BASE_URL).
   tei:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
-    command: --model-id Adc05102002/bge-m3-vi-base --port 80
+    # GPU build built for sm86 (RTX 3060), float16 to keep VRAM small.
+    image: ghcr.io/huggingface/text-embeddings-inference:86-1.9.2
+    gpus: all
+    command: >-
+      --model-id Adc05102002/bge-m3-vi-base
+      --port 80 --pooling cls --dtype float16
+      --max-client-batch-size 64
     environment:
       HF_HOME: /data
     ports:
@@ -82,6 +87,13 @@ services:
       ANTHROPIC_EXTRA_HEADERS: ${RAG_ANTHROPIC_EXTRA_HEADERS:-{}}
       ANTHROPIC_THINKING_TYPE: ${RAG_ANTHROPIC_THINKING_TYPE:-}
       ANTHROPIC_OUTPUT_EFFORT: ${RAG_ANTHROPIC_OUTPUT_EFFORT:-}
+      # Embedding backend: TEI (default) or Ollama bge-m3.
+      # Switch with ./control.sh embeddings <tei|ollama>
+      EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-openai}
+      EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-Adc05102002/bge-m3-vi-base}
+      EMBEDDING_DIM: ${RAG_EMBEDDING_DIM:-1024}
+      EMBEDDING_BASE_URL: ${RAG_EMBEDDING_BASE_URL:-http://tei:80/v1}
+      QDRANT_COLLECTION: ${RAG_QDRANT_COLLECTION:-chunks_vi}
     # Reach Ollama running on the host (OPENAI_BASE_URL in backend/.env.example)
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -111,6 +123,13 @@ services:
       QDRANT_URL: http://qdrant:6333
       S3_ENDPOINT_URL: http://minio:9000
       AUTH_DISABLED: ${AUTH_DISABLED:-false}
+      # Must match api: ingestion and query embeddings have to use the same
+      # encoder and Qdrant collection.
+      EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-openai}
+      EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-Adc05102002/bge-m3-vi-base}
+      EMBEDDING_DIM: ${RAG_EMBEDDING_DIM:-1024}
+      EMBEDDING_BASE_URL: ${RAG_EMBEDDING_BASE_URL:-http://tei:80/v1}
+      QDRANT_COLLECTION: ${RAG_QDRANT_COLLECTION:-chunks_vi}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
