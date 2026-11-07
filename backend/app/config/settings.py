@@ -59,7 +59,10 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     jwt_secret: str = "change-me"
-    jwt_expires_minutes: int = 1440
+    jwt_issuer: str = "rag-api"
+    jwt_audience: str = "rag-web"
+    jwt_access_ttl_seconds: int = 900
+    auth_revocation_ttl_seconds: int = 60
 
     # Observability
     langfuse_enabled: bool = False

@@ -32,6 +32,13 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
+def set_engine(engine: AsyncEngine) -> None:
+    """Point the app at a specific engine (integration tests use a test DB)."""
+    global _engine, _session_factory
+    _engine = engine
+    _session_factory = None
+
+
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
     global _session_factory
     if _session_factory is None:

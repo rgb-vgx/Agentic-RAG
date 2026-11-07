@@ -4,25 +4,26 @@ One model per proposal table. Versioning snapshot columns (9.7) are
 included so every run can reproduce its results.
 """
 
-from datetime import datetime
 import uuid
+from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import (
-    JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
-    Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 
 class Base(DeclarativeBase):
@@ -40,6 +41,47 @@ class TenantMixin:
 
 
 # ---------------------------------------------------------------------------
+# Identity (tenancy + visibility, rag_auth port)
+# ---------------------------------------------------------------------------
+
+
+class TenantRecord(Base):
+    __tablename__ = "tenants"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class UserRecord(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    google_sub: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MembershipRecord(Base):
+    """A user belongs to exactly ONE tenant (PK = user_id)."""
+
+    __tablename__ = "memberships"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("tenants.id"), nullable=False
+    )
+    roles: Mapped[list] = mapped_column(
+        ARRAY(Text), nullable=False, default=["member"]
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "tenant_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Documents (Section 9.4)
 # ---------------------------------------------------------------------------
 
@@ -49,7 +91,15 @@ class DocumentRecord(Base, TenantMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     knowledge_base_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # user_id = owner of the document (column name kept for continuity)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+
+    # Visibility: org = shared inside the tenant, personal = owner only.
+    # No DEFAULT — callers must state the scope explicitly.
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    quarantined_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(1024), nullable=False)
@@ -82,6 +132,14 @@ class DocumentRecord(Base, TenantMixin):
 
     __table_args__ = (
         Index("ix_documents_tenant_kb", "tenant_id", "knowledge_base_id"),
+        Index("ix_documents_tenant_scope_user", "tenant_id", "scope", "user_id"),
+        CheckConstraint("scope IN ('org', 'personal')", name="ck_documents_scope"),
+        # owner must be a member of the tenant that owns the document
+        ForeignKeyConstraint(
+            ["user_id", "tenant_id"],
+            ["memberships.user_id", "memberships.tenant_id"],
+            name="fk_documents_owner_membership",
+        ),
     )
 
 
@@ -108,6 +166,11 @@ class ConversationRecord(Base, TenantMixin):
         back_populates="conversation", cascade="all, delete-orphan"
     )
 
+    __table_args__ = (
+        # target of the composite FKs from messages/agent_runs
+        UniqueConstraint("id", "tenant_id", "user_id"),
+    )
+
 
 class MessageRecord(Base, TenantMixin):
     __tablename__ = "messages"
@@ -116,6 +179,8 @@ class MessageRecord(Base, TenantMixin):
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE")
     )
+    # denormalized owner of the conversation; backfilled by migration 0003
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -137,6 +202,12 @@ class MessageRecord(Base, TenantMixin):
 
     __table_args__ = (
         Index("ix_messages_conversation", "conversation_id", "created_at"),
+        # message must belong to the same conversation AND same user/tenant
+        ForeignKeyConstraint(
+            ["conversation_id", "tenant_id", "user_id"],
+            ["conversations.id", "conversations.tenant_id", "conversations.user_id"],
+            name="fk_messages_conversation_owner",
+        ),
     )
 
 
@@ -151,6 +222,11 @@ class AgentRunRecord(Base, TenantMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+
+    # Retrieval visibility snapshot for this run: {document_id: chunk_set_id}.
+    # Computed from the caller's visible documents; client-provided ids can
+    # only NARROW it, never widen it.
+    snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     query: Mapped[str] = mapped_column(Text, nullable=False)
     resolved_query: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -181,6 +257,12 @@ class AgentRunRecord(Base, TenantMixin):
 
     __table_args__ = (
         Index("ix_agent_runs_conversation", "conversation_id", "created_at"),
+        # run must belong to the same conversation AND same user/tenant
+        ForeignKeyConstraint(
+            ["conversation_id", "tenant_id", "user_id"],
+            ["conversations.id", "conversations.tenant_id", "conversations.user_id"],
+            name="fk_agent_runs_conversation_owner",
+        ),
     )
 
 
