@@ -35,7 +35,7 @@ class HybridRetrievalTool:
             raise ValueError("query_vector is required — embed before calling")
 
         sparse_indices, sparse_values = self.encoder.encode(query)
-        hits = self.retriever.hybrid_search(
+        hits = await self.retriever.hybrid_search(
             dense_vector=dense,
             sparse_indices=sparse_indices,
             sparse_values=sparse_values,
@@ -67,7 +67,7 @@ class ContextExpansionTool:
 
         # Parent point is indexed in the same collection under its own id
         try:
-            points = self.retriever.client.retrieve(
+            points = await self.retriever.client.retrieve(
                 collection_name=self.retriever.collection,
                 ids=[HybridRetriever_point_id(evidence.document_id, parent_id)],
                 with_payload=True,

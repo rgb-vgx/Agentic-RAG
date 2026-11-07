@@ -21,7 +21,6 @@ from qdrant_client.models import (
     SparseVector,
     SparseVectorParams,
     VectorParams,
-    vectors_config,
 )
 
 from app.ingestion.chunking.types import Chunk
@@ -53,22 +52,21 @@ class QdrantIndexer:
         if self.client.collection_exists(self.collection):
             return
 
-        vectors = {
+        vectors: dict = {
             "dense": VectorParams(size=self.dense_dim, distance=Distance.COSINE),
         }
-        sparse = None
+        sparse_vectors: dict | None = None
         if self.enable_sparse:
-            vectors["dense"] = VectorParams(
-                size=self.dense_dim, distance=Distance.COSINE
-            )
-            sparse = SparseVectorParams(
-                index=self._sparse_index_params(),
-            )
+            sparse_vectors = {
+                "sparse": SparseVectorParams(
+                    index=self._sparse_index_params(),
+                )
+            }
 
         self.client.create_collection(
             collection_name=self.collection,
-            vectors_config=vectors_config(vectors),
-            sparse_vectors_config={"sparse": sparse} if sparse else None,
+            vectors_config=vectors,
+            sparse_vectors_config=sparse_vectors,
         )
         self._ensure_payload_indexes()
 

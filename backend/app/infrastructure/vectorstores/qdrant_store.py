@@ -3,12 +3,16 @@
 Hybrid retrieval: dense + sparse search, Reciprocal Rank Fusion (RRF),
 then optional reranking. All queries are tenant-filtered server-side —
 client-side filtering is never the only isolation boundary (Section 15.2).
+
+Uses AsyncQdrantClient: this code runs inside async FastAPI/LangGraph
+paths, and a sync client would block the event loop while waiting on the
+network. The ingestion indexer (worker process) keeps the sync client.
 """
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from qdrant_client import QdrantClient
+from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue, SparseVector
 
 from app.domain.retrieval.types import RetrievedEvidence
@@ -31,7 +35,7 @@ class HybridRetriever:
 
     def __init__(
         self,
-        client: QdrantClient,
+        client: AsyncQdrantClient,
         collection: str,
         dense_dim: int,
         enable_sparse: bool = True,
@@ -76,21 +80,21 @@ class HybridRetriever:
             )
         return Filter(must=must)
 
-    def search_dense(
+    async def search_dense_async(
         self,
         vector: list[float],
         tenant_id: str,
         limit: int = 20,
         **filter_kwargs,
     ) -> list[RawHit]:
-        hits = self.client.query_points(
+        hits = await self.client.query_points(
             collection_name=self.collection,
             query=vector,
             using="dense",
             limit=limit,
             query_filter=self._base_filter(tenant_id, **filter_kwargs),
             with_payload=True,
-        ).points
+        )
         return [
             RawHit(
                 chunk_id=str(hit.payload.get("chunk_id", hit.id)),
@@ -99,10 +103,10 @@ class HybridRetriever:
                 payload=hit.payload or {},
                 dense_rank=index,
             )
-            for index, hit in enumerate(hits)
+            for index, hit in enumerate(hits.points)
         ]
 
-    def search_sparse(
+    async def search_sparse(
         self,
         indices: list[int],
         values: list[float],
@@ -112,14 +116,14 @@ class HybridRetriever:
     ) -> list[RawHit]:
         if not self.enable_sparse or not indices:
             return []
-        hits = self.client.query_points(
+        hits = await self.client.query_points(
             collection_name=self.collection,
             query=SparseVector(indices=indices, values=values),
             using="sparse",
             limit=limit,
             query_filter=self._base_filter(tenant_id, **filter_kwargs),
             with_payload=True,
-        ).points
+        )
         return [
             RawHit(
                 chunk_id=str(hit.payload.get("chunk_id", hit.id)),
@@ -128,7 +132,7 @@ class HybridRetriever:
                 payload=hit.payload or {},
                 sparse_rank=index,
             )
-            for index, hit in enumerate(hits)
+            for index, hit in enumerate(hits.points)
         ]
 
     # ------------------------------------------------------------------
@@ -169,7 +173,7 @@ class HybridRetriever:
     # Public API
     # ------------------------------------------------------------------
 
-    def hybrid_search(
+    async def hybrid_search(
         self,
         dense_vector: list[float],
         sparse_indices: list[int] | None,
@@ -178,11 +182,11 @@ class HybridRetriever:
         limit: int = 20,
         **filter_kwargs,
     ) -> list[RawHit]:
-        dense_hits = self.search_dense(
+        dense_hits = await self.search_dense_async(
             dense_vector, tenant_id, limit=limit * 2, **filter_kwargs
         )
         sparse_hits = (
-            self.search_sparse(
+            await self.search_sparse(
                 sparse_indices or [],
                 sparse_values or [],
                 tenant_id,
