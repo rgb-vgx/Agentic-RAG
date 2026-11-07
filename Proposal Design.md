@@ -218,7 +218,7 @@ flowchart TB
 | Agent Workflow | LangGraph | Stateful agentic workflow |
 | LLM | OpenAI / Anthropic | Planning, evaluation, generation |
 | Embeddings | OpenAI Embeddings | Vector representations |
-| Vector Database | Qdrant | Dense and sparse retrieval |
+| Vector Database | Qdrant | Dense and sparse retrieval; async client on the query path |
 | Metadata Database | PostgreSQL | Users, documents, conversations, chunks |
 | Background Jobs | Redis + RQ | Asynchronous ingestion |
 | Object Storage | S3-compatible storage | Original documents and artifacts |
@@ -263,6 +263,14 @@ flowchart TD
     H --> I --> J --> K
     K --> L --> M --> N
 ```
+
+Upload validation runs at the request boundary, before anything is stored or parsed:
+
+- Maximum file size: 25 MB (5 MB for text files).
+- Maximum PDF page count: 500.
+- Magic bytes must match the declared format — a renamed file is rejected.
+- MIME type and file extension must belong to the allowlist.
+- Parsing never runs in the request handler; it runs in the background worker under resource limits.
 
 ## 4.2. Document Parser
 
@@ -667,6 +675,8 @@ Example:
 }
 ```
 
+The `max_iterations` value is set by the backend from server-side configuration — model output can never extend the retrieval loop.
+
 The planner may select among predefined retrieval strategies.
 
 It cannot invent tools, bypass authorization, or execute arbitrary code.
@@ -765,6 +775,7 @@ Recommended initial limits:
 - Maximum retrieval candidates per task: configurable.
 - Maximum evidence context tokens: configurable.
 - Maximum workflow execution time: configurable.
+- The iteration counter increments exactly once per completed retrieval + evaluation round; the maximum is enforced server-side.
 
 The system should stop early when sufficient evidence is available.
 
@@ -805,6 +816,7 @@ Validation includes:
 - Page reference matches stored metadata.
 - Citation is associated with evidence actually supplied to the synthesizer.
 - The referenced chunk belongs to the active chunk set.
+- Claim support: claim-like sentences without any citation are removed; if no supported content remains, the answer is replaced by an explicit insufficiency message.
 
 Invalid citations must be rejected or regenerated.
 
@@ -1077,6 +1089,8 @@ Each indexed chunk contains:
 The active chunk set must be versioned.
 
 The system must not delete the currently active index before a new indexing version is ready.
+
+Publishing follows a publish-after-verify order: index the new set, verify it is complete, and only then retire the previous set. `documents.active_chunk_set_id` in PostgreSQL is the source of truth for which chunk set is queryable; the Qdrant payload `active` flag is defense-in-depth.
 
 ## 9.6. Document Relationship Metadata
 

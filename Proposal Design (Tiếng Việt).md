@@ -218,7 +218,7 @@ flowchart TB
 | Agent Workflow | LangGraph | Quy trình agent có trạng thái |
 | LLM | OpenAI / Anthropic | Lập kế hoạch, đánh giá, sinh câu trả lời |
 | Embeddings | OpenAI Embeddings | Biểu diễn vector |
-| Cơ sở dữ liệu Vector | Qdrant | Truy xuất dense và sparse |
+| Cơ sở dữ liệu Vector | Qdrant | Truy xuất dense và sparse; client bất đồng bộ trên đường truy vấn |
 | Cơ sở dữ liệu Metadata | PostgreSQL | Người dùng, tài liệu, hội thoại, chunk |
 | Job Nền | Redis + RQ | Nạp tài liệu bất đồng bộ |
 | Object Storage | Lưu trữ tương thích S3 | Tài liệu gốc và các artifact |
@@ -263,6 +263,14 @@ flowchart TD
     H --> I --> J --> K
     K --> L --> M --> N
 ```
+
+Kiểm tra tải lên chạy ở ranh giới request, trước khi bất cứ thứ gì được lưu hay phân tích:
+
+- Kích thước tệp tối đa: 25 MB (5 MB cho tệp văn bản).
+- Số trang PDF tối đa: 500.
+- Magic bytes phải khớp với định dạng khai báo — tệp bị đổi tên sẽ bị từ chối.
+- Kiểu MIME và phần mở rộng tệp phải nằm trong danh sách cho phép.
+- Phân tích không bao giờ chạy trong request handler; nó chạy trong worker nền với giới hạn tài nguyên.
 
 ## 4.2. Document Parser
 
@@ -667,6 +675,8 @@ Ví dụ:
 }
 ```
 
+Giá trị `max_iterations` do backend đặt từ cấu hình phía server — đầu ra của model không bao giờ có thể kéo dài vòng lặp truy xuất.
+
 Planner có thể chọn trong số các chiến lược truy xuất được định nghĩa sẵn.
 
 Planner không thể bịa ra công cụ, vượt qua phân quyền hay thực thi mã tùy ý.
@@ -765,6 +775,7 @@ Giới hạn ban đầu khuyến nghị:
 - Số ứng viên truy xuất tối đa mỗi tác vụ: có thể cấu hình.
 - Số token bối cảnh bằng chứng tối đa: có thể cấu hình.
 - Thời gian thực thi quy trình tối đa: có thể cấu hình.
+- Bộ đếm vòng lặp tăng đúng một lần mỗi lượt truy xuất + đánh giá hoàn tất; giới hạn tối đa được thực thi phía server.
 
 Hệ thống nên dừng sớm khi đã có đủ bằng chứng.
 
@@ -805,6 +816,7 @@ Việc kiểm tra bao gồm:
 - Tham chiếu trang khớp với metadata đã lưu.
 - Trích dẫn liên kết với bằng chứng thực sự được cung cấp cho synthesizer.
 - Chunk được trích dẫn thuộc chunk set đang hoạt động.
+- Hỗ trợ claim: các câu mang nội dung khẳng định nhưng không có trích dẫn nào sẽ bị loại bỏ; nếu không còn nội dung nào được hỗ trợ, câu trả lời sẽ được thay bằng thông báo thiếu bằng chứng rõ ràng.
 
 Các trích dẫn không hợp lệ phải bị loại hoặc sinh lại.
 
@@ -1077,6 +1089,8 @@ Mỗi chunk được lập chỉ mục chứa:
 Chunk set đang hoạt động phải có phiên bản.
 
 Hệ thống không được xóa chỉ mục đang hoạt động trước khi phiên bản lập chỉ mục mới sẵn sàng.
+
+Việc công bố tuân theo thứ tự publish-after-verify: lập chỉ mục tập mới, xác minh nó hoàn chỉnh, và chỉ sau đó mới rút tập cũ. `documents.active_chunk_set_id` trong PostgreSQL là nguồn sự thật về tập chunk nào có thể truy vấn; cờ `active` trong payload Qdrant chỉ là lớp phòng thủ sâu.
 
 ## 9.6. Metadata Quan hệ Tài liệu
 
