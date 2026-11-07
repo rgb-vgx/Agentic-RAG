@@ -1,10 +1,16 @@
-"""Document service — upload, enqueue, delete (Sections 4, 12)."""
+"""Document service — upload, enqueue, delete (Sections 4, 12).
+
+Bound to a Principal: tenant and owner always come from the token, never
+from client input. Visibility/ownership rules live in DocumentRepository.
+"""
 
 import hashlib
+from typing import Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import Principal
 from app.config import settings
 from app.domain.documents.entities import DocumentStatus
 from app.infrastructure.database.models import DocumentRecord
@@ -16,23 +22,26 @@ class DocumentService:
     def __init__(
         self,
         session: AsyncSession,
+        principal: Principal,
         storage: ObjectStorage | None = None,
         redis_client=None,
     ):
-        self.repository = DocumentRepository(session)
+        self.principal = principal
+        self.repository = DocumentRepository(session, principal)
         self.storage = storage or ObjectStorage()
         self.redis = redis_client
 
     async def upload(
         self,
         *,
-        tenant_id: str,
-        user_id: UUID,
         knowledge_base_id: str,
+        scope: str,
         filename: str,
         content_type: str,
         data: bytes,
     ) -> DocumentRecord:
+        if scope not in ("org", "personal"):
+            raise ValueError("scope")
         document_id = uuid4()
 
         # Defense in depth: validate even when called outside the API layer
@@ -40,6 +49,7 @@ class DocumentService:
 
         validate_upload(data, filename, content_type)
 
+        tenant_id = str(self.principal.tenant_id)
         file_hash = hashlib.sha256(data).hexdigest()
         file_type = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
 
@@ -50,13 +60,15 @@ class DocumentService:
             id=document_id,
             tenant_id=tenant_id,
             knowledge_base_id=knowledge_base_id,
-            user_id=user_id,
+            user_id=self.principal.user_id,
+            scope=scope,
             filename=filename,
             storage_path=key,
             file_hash=file_hash,
             file_type=file_type,
             status=DocumentStatus.UPLOADED.value,
         )
+        # add() re-asserts tenant/user from the Principal (defence in depth)
         await self.repository.add(record)
 
         # Enqueue background ingestion (RQ) — retried, idempotent by document id
@@ -79,10 +91,27 @@ class DocumentService:
             retry=3,
         )
 
-    async def request_delete(self, document_id: UUID, tenant_id: str) -> None:
-        """Soft-delete: status → DELETING; the worker removes vectors + file."""
-        record = await self.repository.get(document_id, tenant_id)
-        if record is None:
+    async def request_delete(
+        self, document_id: UUID
+    ) -> Literal["deleted", "not_found", "forbidden"]:
+        """Soft-delete after the ownership gate; the worker removes vectors + file."""
+        result = await self.repository.delete(document_id)
+        if result != "deleted":
+            return result
+        self._enqueue_delete(document_id, str(self.principal.tenant_id))
+        return result
+
+    def _enqueue_delete(self, document_id: UUID, tenant_id: str) -> None:
+        if self.redis is None:
             return
-        record.status = DocumentStatus.DELETING.value
-        await self.repository.update_status(document_id, DocumentStatus.DELETING.value)
+        from rq import Queue
+
+        queue = Queue(settings.ingestion_queue, connection=self.redis)
+        queue.enqueue(
+            "app.workers.ingestion_job.delete_document",
+            str(document_id),
+            tenant_id,
+            job_id=f"delete-{document_id}",
+            job_timeout=300,
+            retry=3,
+        )

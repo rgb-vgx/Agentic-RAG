@@ -26,8 +26,6 @@ def process_document(document_id: str, tenant_id: str, storage_path: str) -> dic
 
 
 async def _process_async(document_id: str, tenant_id: str, storage_path: str) -> dict:
-    from sqlalchemy import select
-
     from app.domain.documents.entities import Document, DocumentStatus
     from app.infrastructure.database.models import DocumentRecord
     from app.infrastructure.database.session import get_session_factory
@@ -84,7 +82,8 @@ async def _process_async(document_id: str, tenant_id: str, storage_path: str) ->
         logger.info(
             "ingestion complete", extra={"document_id": document_id, "status": record.status}
         )
-        return {"status": record.status, "chunks": len(result.run_metadata.get("strategy_runs", []))}
+        strategy_runs = result.run_metadata.get("strategy_runs", [])
+        return {"status": record.status, "chunks": len(strategy_runs)}
 
 
 async def _mark_failed(session, record, message: str) -> None:
@@ -129,11 +128,15 @@ async def _delete_async(document_id: str, tenant_id: str) -> dict:
     prefix = f"tenants/{tenant_id}/documents/{document_id}/"
     storage.delete_prefix(prefix)
 
-    # 3. Remove the row
+    # 3. Remove the row (tenant_id in the WHERE as defence in depth —
+    #    never trust the job argument alone)
     factory = get_session_factory()
     async with factory() as session:
         await session.execute(
-            delete(DocumentRecord).where(DocumentRecord.id == document_id)
+            delete(DocumentRecord).where(
+                DocumentRecord.id == document_id,
+                DocumentRecord.tenant_id == tenant_id,
+            )
         )
         await session.commit()
 

@@ -1,49 +1,164 @@
-"""Repository layer — data access for API/services.
+"""Repository layer — Principal-bound data access (rag_auth port, ORM style).
 
-Repositories take an AsyncSession and expose domain-friendly methods.
-They never leak SQLAlchemy models outside the infrastructure layer.
+Hard rules, ported from the reference package and enforced by
+tests/integration/test_repos_direct.py:
+- No method takes tenant_id/user_id from the caller: they always come from
+  the Principal bound at construction.
+- Every query — including INSERT/UPDATE/DELETE — carries the ownership
+  condition; API-level checks are not the only line of defence.
+- Visibility: documents = same tenant AND (scope='org' OR owner=me);
+  conversations/messages/runs = same tenant AND same user.
 """
 
+from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import Principal
+from app.domain.documents.entities import DocumentStatus
 from app.infrastructure.database.models import (
     AgentRunRecord,
     ConversationRecord,
     DocumentRecord,
+    MembershipRecord,
     MessageRecord,
+    UserRecord,
 )
 
+Scope = Literal["org", "personal"]
 
+
+# ---- identity (before a Principal exists) ------------------------------------------------
+async def find_member_by_google_sub(session: AsyncSession, sub: str) -> dict | None:
+    """Membership row for a Google subject, or None (invite-only: no auto-provision)."""
+    stmt = (
+        select(UserRecord, MembershipRecord)
+        .join(MembershipRecord, MembershipRecord.user_id == UserRecord.id)
+        .where(UserRecord.google_sub == sub)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    if row is None:
+        return None
+    user, membership = row
+    return {
+        "user_id": user.id,
+        "disabled_at": user.disabled_at,
+        "tenant_id": membership.tenant_id,
+        "roles": list(membership.roles),
+    }
+
+
+async def is_member_active(session: AsyncSession, p: Principal) -> bool:
+    """Revocation check: user still a member of the token's tenant and not disabled."""
+    stmt = (
+        select(UserRecord.id)
+        .join(MembershipRecord, MembershipRecord.user_id == UserRecord.id)
+        .where(
+            UserRecord.id == p.user_id,
+            MembershipRecord.tenant_id == str(p.tenant_id),
+            UserRecord.disabled_at.is_(None),
+        )
+    )
+    result = await session.execute(stmt)
+    return result.first() is not None
+
+
+# ---- documents: org shared in tenant, personal visible to owner only --------------------
 class DocumentRepository:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, principal: Principal):
         self.session = session
+        self.principal = principal
+
+    def _visible(self):
+        p = self.principal
+        return and_(
+            DocumentRecord.tenant_id == str(p.tenant_id),
+            or_(DocumentRecord.scope == "org", DocumentRecord.user_id == p.user_id),
+        )
 
     async def add(self, record: DocumentRecord) -> DocumentRecord:
+        if record.scope not in ("org", "personal"):
+            raise ValueError("scope")
+        # tenant/owner always come from the Principal, never from the caller
+        record.tenant_id = str(self.principal.tenant_id)
+        record.user_id = self.principal.user_id
         self.session.add(record)
         await self.session.commit()
         await self.session.refresh(record)
         return record
 
-    async def get(self, document_id: UUID, tenant_id: str) -> DocumentRecord | None:
+    async def get(self, document_id: UUID) -> DocumentRecord | None:
         stmt = select(DocumentRecord).where(
             DocumentRecord.id == document_id,
-            DocumentRecord.tenant_id == tenant_id,
+            self._visible(),
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def list_for_kb(
-        self, tenant_id: str, knowledge_base_id: str | None = None, limit: int = 100
+    async def list(
+        self, knowledge_base_id: str | None = None, limit: int = 100
     ) -> list[DocumentRecord]:
-        stmt = select(DocumentRecord).where(DocumentRecord.tenant_id == tenant_id)
+        stmt = select(DocumentRecord).where(
+            self._visible(),
+            DocumentRecord.status != DocumentStatus.DELETING.value,
+        )
         if knowledge_base_id:
             stmt = stmt.where(DocumentRecord.knowledge_base_id == knowledge_base_id)
         stmt = stmt.order_by(DocumentRecord.created_at.desc()).limit(limit)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    def can_manage(self, doc: DocumentRecord) -> bool:
+        """Delete/reprocess: personal -> owner only (admin does NOT outrank it);
+        org -> owner or admin."""
+        if doc.user_id == self.principal.user_id:
+            return True
+        return doc.scope == "org" and "admin" in self.principal.roles
+
+    async def delete(self, document_id: UUID) -> Literal["deleted", "not_found", "forbidden"]:
+        doc = await self.get(document_id)
+        if doc is None:
+            return "not_found"
+        if not self.can_manage(doc):
+            return "forbidden"
+        # Soft delete: the background job retires the chunk set and removes files.
+        if doc.status != DocumentStatus.DELETING.value:
+            doc.status = DocumentStatus.DELETING.value
+            await self.session.commit()
+        return "deleted"
+
+    async def quarantine(self, document_id: UUID) -> DocumentRecord | None:
+        """Org documents only; personal docs of others are not even visible here."""
+        doc = await self.get(document_id)
+        if doc is None or doc.scope != "org":
+            return None
+        if doc.quarantined_at is None:
+            doc.quarantined_at = datetime.now(UTC)
+            await self.session.commit()
+            await self.session.refresh(doc)
+        return doc
+
+    async def active_chunk_sets(
+        self, only_doc_ids: list[UUID] | None = None
+    ) -> dict[UUID, UUID]:
+        """Retrieval snapshot for THIS principal. only_doc_ids can only NARROW
+        the snapshot, never widen it."""
+        stmt = select(
+            DocumentRecord.id, DocumentRecord.active_chunk_set_id
+        ).where(
+            self._visible(),
+            DocumentRecord.active_chunk_set_id.is_not(None),
+            DocumentRecord.quarantined_at.is_(None),
+            DocumentRecord.status != DocumentStatus.DELETING.value,
+        )
+        if only_doc_ids is not None:
+            stmt = stmt.where(DocumentRecord.id.in_(only_doc_ids))
+        result = await self.session.execute(stmt)
+        return {row[0]: row[1] for row in result.all()}
 
     async def update_status(
         self,
@@ -53,9 +168,9 @@ class DocumentRepository:
         quality_report: dict | None = None,
         run_metadata: dict | None = None,
     ) -> None:
-        record = await self.get(document_id, tenant_id="")  # internal path
-        if record is None:
-            record = await self.session.get(DocumentRecord, document_id)
+        """Status transitions go through the same visibility gate — there is no
+        tenant-less bypass path anymore."""
+        record = await self.get(document_id)
         if record is None:
             return
         record.status = status
@@ -67,85 +182,147 @@ class DocumentRepository:
             record.run_metadata = run_metadata
         await self.session.commit()
 
-    async def delete(self, document_id: UUID) -> None:
-        record = await self.session.get(DocumentRecord, document_id)
-        if record is not None:
-            await self.session.delete(record)
-            await self.session.commit()
 
-
+# ---- conversations: private per (tenant, user) -------------------------------------------
 class ConversationRepository:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, principal: Principal):
         self.session = session
+        self.principal = principal
 
-    async def add(self, record: ConversationRecord) -> ConversationRecord:
+    def _owned(self):
+        p = self.principal
+        return and_(
+            ConversationRecord.tenant_id == str(p.tenant_id),
+            ConversationRecord.user_id == p.user_id,
+        )
+
+    async def create(self, title: str) -> ConversationRecord:
+        record = ConversationRecord(
+            tenant_id=str(self.principal.tenant_id),
+            user_id=self.principal.user_id,
+            title=title,
+        )
         self.session.add(record)
         await self.session.commit()
         await self.session.refresh(record)
         return record
 
-    async def get(self, conversation_id: UUID, tenant_id: str) -> ConversationRecord | None:
+    async def get(self, conversation_id: UUID) -> ConversationRecord | None:
         stmt = select(ConversationRecord).where(
             ConversationRecord.id == conversation_id,
-            ConversationRecord.tenant_id == tenant_id,
+            self._owned(),
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def list_for_user(
-        self, tenant_id: str, user_id: UUID, limit: int = 100
-    ) -> list[ConversationRecord]:
+    async def list(self, limit: int = 100) -> list[ConversationRecord]:
         stmt = (
             select(ConversationRecord)
-            .where(
-                ConversationRecord.tenant_id == tenant_id,
-                ConversationRecord.user_id == user_id,
-            )
+            .where(self._owned())
             .order_by(ConversationRecord.updated_at.desc())
             .limit(limit)
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def delete(self, conversation_id: UUID) -> None:
-        record = await self.session.get(ConversationRecord, conversation_id)
-        if record is not None:
-            await self.session.delete(record)
-            await self.session.commit()
-
-
-class MessageRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
-
-    async def add(self, record: MessageRecord) -> MessageRecord:
-        self.session.add(record)
-        await self.session.commit()
-        await self.session.refresh(record)
-        return record
-
-    async def list_for_conversation(
-        self, conversation_id: UUID, limit: int = 200
-    ) -> list[MessageRecord]:
+    async def messages(self, conversation_id: UUID) -> list[MessageRecord] | None:
+        if await self.get(conversation_id) is None:
+            return None
         stmt = (
             select(MessageRecord)
-            .where(MessageRecord.conversation_id == conversation_id)
-            .order_by(MessageRecord.created_at.asc())
-            .limit(limit)
+            .where(
+                MessageRecord.conversation_id == conversation_id,
+                MessageRecord.tenant_id == str(self.principal.tenant_id),
+                MessageRecord.user_id == self.principal.user_id,
+            )
+            .order_by(MessageRecord.created_at.asc(), MessageRecord.id.asc())
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-
-class AgentRunRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
-
-    async def add(self, record: AgentRunRecord) -> AgentRunRecord:
+    async def add_message(
+        self,
+        conversation_id: UUID,
+        role: str,
+        content: str,
+        *,
+        sources: list | None = None,
+        model_name: str | None = None,
+        token_usage: dict | None = None,
+    ) -> MessageRecord | None:
+        """Ownership is resolved BEFORE the insert and the composite FK
+        (conversation_id, tenant_id, user_id) makes the DB reject any drift."""
+        conv = await self.get(conversation_id)
+        if conv is None:
+            return None
+        record = MessageRecord(
+            conversation_id=conv.id,
+            tenant_id=conv.tenant_id,
+            user_id=conv.user_id,
+            role=role,
+            content=content,
+            sources=sources or [],
+            model_name=model_name,
+            token_usage=token_usage or {},
+        )
         self.session.add(record)
         await self.session.commit()
         await self.session.refresh(record)
         return record
+
+    async def delete(self, conversation_id: UUID) -> bool:
+        record = await self.get(conversation_id)
+        if record is None:
+            return False
+        await self.session.delete(record)
+        await self.session.commit()
+        return True
+
+
+# ---- agent runs: snapshot per (user, run) --------------------------------------------------
+class AgentRunRepository:
+    def __init__(self, session: AsyncSession, principal: Principal):
+        self.session = session
+        self.principal = principal
+
+    def _owned(self):
+        p = self.principal
+        return and_(
+            AgentRunRecord.tenant_id == str(p.tenant_id),
+            AgentRunRecord.user_id == p.user_id,
+        )
+
+    async def create(
+        self,
+        conversation_id: UUID,
+        *,
+        query: str,
+        snapshot: dict[UUID, UUID] | None = None,
+    ) -> AgentRunRecord | None:
+        # Ownership check happens first: never create a run for someone else's
+        # conversation, and never spend tokens on a request that will be denied.
+        conv_repo = ConversationRepository(self.session, self.principal)
+        if await conv_repo.get(conversation_id) is None:
+            return None
+        record = AgentRunRecord(
+            conversation_id=conversation_id,
+            tenant_id=str(self.principal.tenant_id),
+            user_id=self.principal.user_id,
+            query=query,
+            snapshot={str(k): str(v) for k, v in (snapshot or {}).items()},
+        )
+        self.session.add(record)
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
+    async def get(self, run_id: UUID) -> AgentRunRecord | None:
+        stmt = select(AgentRunRecord).where(
+            AgentRunRecord.id == run_id,
+            self._owned(),
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def update(
         self,
@@ -160,7 +337,7 @@ class AgentRunRepository:
         latency_ms: int | None = None,
         error_message: str | None = None,
     ) -> None:
-        record = await self.session.get(AgentRunRecord, run_id)
+        record = await self.get(run_id)   # ownership inside the SELECT
         if record is None:
             return
         if status is not None:
