@@ -20,6 +20,7 @@ from app.agentic_rag.synthesis.synthesizer import AnswerSynthesizer
 from app.agentic_rag.validation.citations import CitationValidator
 from app.domain.agents.state import AgentState, WorkflowLimits
 from app.domain.retrieval.types import EvidenceGroup, EvidenceStatus, RetrievalPlan
+from app.config import settings
 from app.infrastructure.llm.base import BaseLLMClient
 from app.infrastructure.observability.langfuse_tracer import trace_node
 from app.infrastructure.vectorstores.qdrant_store import HybridRetriever
@@ -101,7 +102,12 @@ def route_after_analyze(state: AgentState) -> str:
 
 
 async def plan_node(state: AgentState, ctx: NodeContext) -> dict:
-    """Build the RetrievalPlan (Section 7.1)."""
+    """Build the RetrievalPlan (Section 7.1).
+
+    Note: iteration_count is intentionally NOT reset here — it counts
+    completed retrieve+evaluate rounds across replans (see evaluate_node),
+    which is what bounds the loop in should_continue.
+    """
     async with trace_node("plan", run_id=state.get("run_id")) as span:
         from app.domain.agents.state import QueryAnalysis
         from app.domain.retrieval.types import ResolvedQuery
@@ -110,7 +116,7 @@ async def plan_node(state: AgentState, ctx: NodeContext) -> dict:
         analysis = QueryAnalysis(**state["query_analysis"])
         plan = await ctx.planner.plan(resolved, analysis)
         span["output"] = plan.model_dump()
-        return {"retrieval_plan": plan.model_dump(), "iteration_count": 0}
+        return {"retrieval_plan": plan.model_dump()}
 
 
 async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
@@ -199,6 +205,9 @@ async def evaluate_node(state: AgentState, ctx: NodeContext) -> dict:
             "evidence_status": overall,
             "missing_information": missing,
             "contradictions": contradictions,
+            # One bounded round completed — this is the loop counter
+            # (incremented in exactly one place so replans can't double-count)
+            "iteration_count": state.get("iteration_count", 0) + 1,
         }
 
 
@@ -206,10 +215,16 @@ def should_continue(state: AgentState) -> str:
     """Conditional edge: iterate when evidence is insufficient (bounded)."""
     status = state.get("evidence_status", EvidenceStatus.INSUFFICIENT.value)
     iteration = state.get("iteration_count", 0)
-    max_iterations = 1
 
+    # The plan may ask for more rounds, but the server-side config is the
+    # hard cap — a prompt-injected or hallucinated max_iterations must not
+    # be able to extend the loop.
     plan = state.get("retrieval_plan") or {}
-    max_iterations = int(plan.get("max_iterations", 3))
+    try:
+        requested = int(plan.get("max_iterations", 3))
+    except (TypeError, ValueError):
+        requested = 3
+    max_iterations = max(1, min(requested, settings.agent_max_retrieval_iterations))
 
     if status in (
         EvidenceStatus.SUFFICIENT.value,
@@ -217,7 +232,7 @@ def should_continue(state: AgentState) -> str:
         EvidenceStatus.CONFLICTING.value,
     ):
         return "synthesize"
-    if iteration + 1 >= max_iterations:
+    if iteration >= max_iterations:
         return "synthesize"  # bounded — never loop forever (Section 10)
     return "plan"  # replan with missing_information as guidance
 
@@ -231,24 +246,31 @@ async def synthesize_node(state: AgentState, ctx: NodeContext) -> dict:
 
         answer = await ctx.synthesizer.synthesize(query, groups)
         span["output"] = {"answer_chars": len(answer)}
-        return {"final_answer": answer, "iteration_count": state.get("iteration_count", 0) + 1}
+        return {"final_answer": answer}
 
 
 async def validate_citations_node(state: AgentState, ctx: NodeContext) -> dict:
-    """Deterministic citation validation (Section 7.5)."""
+    """Deterministic citation validation with claim-support check (7.5)."""
     async with trace_node("validate_citations", run_id=state.get("run_id")) as span:
         answer = state.get("final_answer") or ""
         groups = [EvidenceGroup(**g) for g in state.get("evidence_groups", [])]
 
-        cleaned, sources, invalid = ctx.citation_validator.validate(answer, groups)
+        result = ctx.citation_validator.validate(
+            answer,
+            groups,
+            user_query=state.get("user_query", ""),
+        )
         span["output"] = {
-            "sources": len(sources),
-            "invalid": invalid,
+            "sources": len(result.sources),
+            "invalid": result.invalid_references,
+            "dropped_claims": len(result.dropped_claims),
+            "fallback": result.fallback,
         }
         return {
-            "final_answer": cleaned,
-            "citations": [s.model_dump(mode="json") for s in sources],
-            "invalid_citations": invalid,
+            "final_answer": result.answer,
+            "citations": [s.model_dump(mode="json") for s in result.sources],
+            "invalid_citations": result.invalid_references,
+            "validation_fallback": result.fallback,
         }
 
 

@@ -8,6 +8,7 @@ with structured JSON output and deterministic fallbacks.
 import json
 
 from app.agentic_rag import prompts
+from app.config import settings
 from app.domain.agents.state import QueryAnalysis
 from app.domain.retrieval.types import ResolvedQuery, RetrievalPlan, RetrievalStrategy
 from app.infrastructure.llm.base import BaseLLMClient, LLMMessage
@@ -141,7 +142,8 @@ class RetrievalPlanner:
                 requires_context_expansion=bool(
                     data.get("requires_context_expansion", False)
                 ),
-                max_iterations=3,
+                # Server-side cap — never derived from model output
+                max_iterations=settings.agent_max_retrieval_iterations,
             )
         except (ValueError, json.JSONDecodeError):
             return RetrievalPlan(
