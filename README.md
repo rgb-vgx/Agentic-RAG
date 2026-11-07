@@ -87,12 +87,51 @@ cd backend && pytest
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/v1/health` | Liveness |
-| POST | `/api/v1/documents` | Multipart upload → RQ ingestion job |
-| GET/DELETE | `/api/v1/documents/{id}` | List / soft-delete |
-| GET/POST | `/api/v1/conversations` | Conversations CRUD |
+| GET | `/api/v1/health` | Liveness (public) |
+| POST | `/api/v1/auth/google` | Google ID token → backend access JWT (public, invite-only) |
+| POST | `/api/v1/documents` | Multipart upload (`file` + `scope`) → RQ ingestion job |
+| GET/DELETE | `/api/v1/documents/{id}` | Visible docs only / soft-delete (gated) |
+| POST | `/api/v1/documents/{id}/quarantine` | Admin only, org documents |
+| GET/POST | `/api/v1/conversations` | Conversations (private per user) |
 | GET | `/api/v1/conversations/{id}/messages` | History |
 | POST | `/api/v1/chat` | SSE stream: `run_started → status* → token* → citation* → completed` |
+
+## Authentication & tenancy (rag_auth integration)
+
+Deny-by-default at the router level: only `/health*` and `/auth/google`
+are public; every other route requires `Authorization: Bearer <JWT>`.
+
+- **`app/auth.py`** — `Principal(user_id, tenant_id, roles)`; access JWT
+  signed by the backend (HS256 pinned, `exp/iss/aud/sub/typ` required);
+  all failures return one uniform 401. Revocation: a disabled user or a
+  removed membership loses access within `auth_revocation_ttl_seconds`
+  (checked on every request in tests).
+- **Invite-only Google login** (`POST /auth/google`) — Google proves
+  identity only; tenant/roles come from `memberships`. Unknown `google_sub`
+  → 403, never auto-provisioned (domain auto-join deferred).
+- **Visibility** — `documents.scope ∈ {org, personal}` (no DEFAULT):
+  org = shared in tenant, personal = owner only (admin does NOT outrank
+  it). Conversations/messages/runs are private per (tenant, user).
+  "Not yours" and "does not exist" are both 404 — no existence oracle.
+- **DB as last line of defence** (migration `0003_auth_tenancy`) —
+  composite FKs `(owner, tenant) → memberships` and
+  `(conversation, tenant, user) → conversations`; `scope` CHECK; even
+  buggy code cannot write cross-tenant rows.
+- **Retrieval snapshot per run** — `agent_runs.snapshot`
+  (`{document_id: chunk_set_id}`) resolved from the caller's visible,
+  active, non-quarantined documents; client `document_ids` only narrow it.
+
+### Running the integration suite (real Postgres)
+
+```bash
+cd backend
+docker compose -f tests/integration/docker-compose.test.yml up -d --wait
+TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/ragtest \
+  pytest tests/integration -q          # 27 tests: auth, IDOR, visibility, repos+DB constraints
+```
+
+⚠️ The suite **drops schema `public`** of the target database — point
+`TEST_DATABASE_URL` only at a disposable DB.
 
 ## Production review — round 1 (external technical review)
 
@@ -111,21 +150,23 @@ not exist in the real code). Fixed in this round:
 | Sync Qdrant client blocking the event loop on the query path | ✅ Fixed — `AsyncQdrantClient` for retrieval, sync client for the worker |
 
 Recorded for the next round (P1 — needs design, not spot fixes):
-authorization middleware (`Principal` + tenant-scoped SQL + IDOR tests),
 ingestion state machine with per-run job identity, prompt-injection
-defenses (untrusted content, tool allowlist), retrieval snapshot per run
-(`active_chunk_set_ids` resolved at run start), Langfuse redaction, and
-the integration-test matrix (tenant isolation, citation reorder,
-reprocessing, client disconnect).
+defenses (untrusted content, tool allowlist), Langfuse redaction, and the
+remaining integration-test cases (citation reorder, reprocessing, client
+disconnect). ~~Authorization middleware / IDOR tests / per-run retrieval
+snapshot~~ — done (rag_auth integration, see above).
 
 ## Status
 
 Raw codebase per Proposal v1.1 — full logic with real SDK calls written but
 not yet wired/run against live infrastructure:
 
-- ✅ Backend modules, Alembic migrations (0001–0002), Docker, 43 passing unit tests
+- ✅ Backend modules, Alembic migrations (0001–0003), Docker, 43 passing unit tests
+- ✅ Auth boundary: Principal JWT, deny-by-default routers, tenancy schema, Principal-bound repositories
+- ✅ 27 integration tests written (auth/IDOR/visibility/repo+DB constraints) — need a real Postgres to run
 - ✅ Frontend chat (SSE) + documents (upload/poll/delete) pages
 - ✅ Production review round 1: loop bound, chunk-set publish, citation grounding, upload gate, async Qdrant
-- ⏳ Run against live Postgres/Qdrant/Redis/S3 + LLM keys (next step)
-- ⏳ P1 hardening: auth boundary, ingestion state machine, injection defenses
-- ⏳ Google OAuth wiring, Langfuse activation, offline retrieval benchmark
+- ⏳ Run the full suite against live Postgres/Qdrant/Redis/S3 + LLM keys (next step)
+- ⏳ Frontend Google OAuth wiring + Bearer headers on API calls
+- ⏳ P1 hardening: ingestion state machine, injection defenses
+- ⏳ Langfuse activation, offline retrieval benchmark

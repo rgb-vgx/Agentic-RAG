@@ -1,0 +1,18 @@
+# Disposable Postgres for tests/integration — the suite DROPs schema `public`.
+#   docker compose -f tests/integration/docker-compose.test.yml up -d --wait
+#   TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/ragtest \
+#       pytest tests/integration -q
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ragtest
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ragtest"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
