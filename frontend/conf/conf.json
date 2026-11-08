@@ -1,5 +1,5 @@
 {
-  "api_url": "http://localhost:8000",
+  "api_url": "",
   "api_prefix": "/api/v1",
   "documents_poll_interval_ms": 3000,
   "oauth_enabled": false

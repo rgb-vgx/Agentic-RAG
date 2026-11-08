@@ -28,3 +28,6 @@ testdata/
 
 # Reference source clones (not part of this project)
 ref/
+
+# Cloudflare CLI local state
+.cloudflare/

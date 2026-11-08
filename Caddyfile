@@ -1,0 +1,34 @@
+# Same-origin entry point for the public tunnel:
+#   /api/*  -> FastAPI (SSE must flush immediately)
+#   /*      -> Next.js frontend
+:80 {
+	log {
+		output stdout
+		format console
+	}
+	handle /api/* {
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+	# Swagger/OpenAPI live outside /api/v1 on FastAPI.
+	handle /docs* {
+		reverse_proxy api:8000
+	}
+	handle /openapi.json {
+		reverse_proxy api:8000
+	}
+	handle /redoc* {
+		reverse_proxy api:8000
+	}
+	# Hashed build assets: let the browser cache them, but keep Cloudflare
+	# out of the cache-fill path (it intermittently 502s on cache misses).
+	handle /_next/* {
+		reverse_proxy frontend:3000 {
+			header_down Cache-Control "private, max-age=31536000, immutable"
+		}
+	}
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

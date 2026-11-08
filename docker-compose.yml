@@ -1,6 +1,6 @@
 # Agentic RAG — full local stack (Section 16.4)
 #   docker compose up --build
-# Frontend: http://localhost:3000  |  API: http://localhost:8000/docs
+# Web (same-origin via Caddy): http://localhost:8090  |  API: http://localhost:8000/docs
 # Postgres is exposed on localhost:5436 (5432/5433/5434 are already used).
 
 services:
@@ -126,7 +126,7 @@ services:
       # for models that do not use one (bge-m3/TEI).
       EMBEDDING_QUERY_INSTRUCTION: "${RAG_EMBEDDING_QUERY_INSTRUCTION-Given a Vietnamese question, retrieve passages that answer the question}"
       QDRANT_COLLECTION: ${RAG_QDRANT_COLLECTION:-chunks_qwen3_8b}
-      # Reranker (llama.cpp service). Disable with RAG_RERANK_ENABLED=false.
+      # Reranker (transformers service). Disable with RAG_RERANK_ENABLED=false.
       RERANK_ENABLED: ${RAG_RERANK_ENABLED:-true}
       RERANK_URL: ${RAG_RERANK_URL:-http://reranker:8000}
       RERANK_PATH: ${RAG_RERANK_PATH:-/rerank}
@@ -179,12 +179,21 @@ services:
         condition: service_started
     command: rq worker ingestion --url redis://redis:6379/0
 
+  # Same-origin entry point for the public tunnel (and local :8090).
+  proxy:
+    image: caddy:2-alpine
+    ports:
+      - "8090:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api
+      - frontend
+
   frontend:
     build: ./frontend
     ports:
       - "3000:3000"
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
     depends_on:
       - api
 

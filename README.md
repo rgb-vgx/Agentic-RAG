@@ -36,8 +36,9 @@ Agentic-RAG/
 
 ```bash
 docker compose up --build
-# API docs:  http://localhost:8000/docs
-# Frontend:  http://localhost:3000
+# Web (UI + API same-origin): http://localhost:8090
+# API docs:  http://localhost:8090/docs  (direct: http://localhost:8000/docs)
+# Frontend:  http://localhost:3000       (UI only; API must go through 8090)
 # Postgres:  localhost:5436 (agentic/agentic)  |  Qdrant: localhost:6333/6334
 ```
 
@@ -98,7 +99,8 @@ conversations, vectors, or the embedding-model cache.
 
 | Service | URL |
 |---|---|
-| Frontend | http://localhost:3000 |
+| **Web (Caddy, same-origin)** | **http://localhost:8090** — UI + `/api/v1` + `/docs` |
+| Frontend (Next.js) | http://localhost:3000 (UI only; API is relative, so use 8090) |
 | API / Swagger | http://localhost:8000/docs |
 | Qdrant dashboard | http://localhost:6333/dashboard |
 | MinIO API / console | localhost:9000 / http://localhost:9002 |
@@ -111,6 +113,42 @@ conversations, vectors, or the embedding-model cache.
 The MinIO console is on **9002** because `127.0.0.1:9001` is used by another
 local service (penpot in this setup). If it is free on your machine, change
 the mapping back in `docker-compose.yml`.
+
+### Public domain / Cloudflare Tunnel
+
+The `proxy` service (Caddy, host port **8090**) serves the UI and API on one
+origin:
+
+- `/api/*` → `api:8000` (prefix preserved, SSE flushed immediately);
+- `/docs`, `/openapi.json`, `/redoc` → `api:8000`;
+- everything else → `frontend:3000`.
+
+`frontend/conf/conf.json` sets `"api_url": ""`, so the browser calls relative
+`/api/v1/...`; no CORS and no hard-coded host. It is inlined at build time, so
+rebuild the frontend when changing it. Caddy loads its config at startup;
+after editing `Caddyfile` run `docker compose up -d --force-recreate proxy`.
+
+For Cloudflare Tunnel, in Zero Trust → Networks → Tunnels → the active tunnel →
+the `rag.thuyetmt.io.vn` Public Hostname, set **Service =
+`http://localhost:8090`** (not 3000). The hostname's DNS record must be a
+CNAME to that tunnel — error **1033** means the hostname is attached to a
+different tunnel or the tunnel is down.
+
+If static assets return intermittent 502s, check for extra connectors on the
+tunnel (`cf tunnels list`, or the dashboard): every connector must point at the
+host running Caddy. A leftover connector from another machine (reused token)
+takes a share of traffic and returns 502 because nothing listens on
+`localhost:8090` there. Remove it with
+`cf tunnels connections cleanup <tunnel-id> --client-id <id>` and stop that
+process; otherwise rotate/recreate the tunnel. A Bypass cache rule is only a
+temporary workaround and is not needed with a single connector.
+
+Verify with:
+
+```bash
+curl -sS https://rag.thuyetmt.io.vn/api/v1/health   # {"status":"ok"}
+curl -sSI https://rag.thuyetmt.io.vn/chat | head -1 # HTTP/2 200
+```
 
 ### Persistence
 
@@ -216,7 +254,7 @@ keeps the reranker at ~4.7 GB, so it coexists with the 8B embedder
    backend sends both. Treat the token as a secret — `.env` is git-ignored.
 3. `./control.sh start` — builds images, runs Alembic, creates the bucket and
    seeds the dev principal when `AUTH_DISABLED=true`.
-4. Open http://localhost:3000/documents, upload a PDF/DOCX/TXT, wait for status
+4. Open http://localhost:8090/documents, upload a PDF/DOCX/TXT, wait for status
    `ready`, then ask a question in `/chat`.
 5. The reranker downloads Qwen3-Reranker-4B on its first start (~8 GB, cached
    in `reranker_cache`); the healthcheck allows up to 15 minutes. Chat falls
@@ -253,8 +291,9 @@ keeps the reranker at ~4.7 GB, so it coexists with the 8B embedder
   `APP_CONFIG_FILE=/path/to/conf.json` to use a different file.
 - **Frontend** — `frontend/conf/conf.json` is imported at build time
   (`src/lib/config.ts`); `NEXT_PUBLIC_API_URL` and
-  `NEXT_PUBLIC_API_PREFIX` override it. Rebuild the frontend after
-  changing the JSON.
+  `NEXT_PUBLIC_API_PREFIX` override it. `api_url` defaults to `""` so the
+  browser calls same-origin `/api/v1` through Caddy. Rebuild the frontend
+  after changing the JSON.
 
 ### LLM providers
 

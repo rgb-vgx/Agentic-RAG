@@ -2,7 +2,7 @@
   "app_env": "development",
   "app_debug": false,
   "api_v1_prefix": "/api/v1",
-  "cors_origins": ["http://localhost:3000"],
+  "cors_origins": ["http://localhost:3000", "http://localhost:8090", "https://rag.thuyetmt.io.vn"],
 
   "database_url": "postgresql+asyncpg://agentic:agentic@localhost:5436/agentic_rag",
 

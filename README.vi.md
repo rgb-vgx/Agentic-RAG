@@ -37,8 +37,9 @@ Agentic-RAG/
 
 ```bash
 docker compose up --build
-# API docs:  http://localhost:8000/docs
-# Frontend:  http://localhost:3000
+# Web (UI + API same-origin): http://localhost:8090
+# API docs:  http://localhost:8090/docs  (trực tiếp: http://localhost:8000/docs)
+# Frontend:  http://localhost:3000          (UI only, API phải qua 8090)
 # Postgres:  localhost:5436 (agentic/agentic)  |  Qdrant: localhost:6333/6334
 ```
 
@@ -97,7 +98,8 @@ xoá tài liệu, hội thoại, vector hay cache model embedding.
 
 | Service | URL |
 |---|---|
-| Frontend | http://localhost:3000 |
+| **Web (Caddy, same-origin)** | **http://localhost:8090** — UI + `/api/v1` + `/docs` |
+| Frontend (Next.js) | http://localhost:3000 (chỉ UI; API relative nên phải vào qua 8090) |
 | API / Swagger | http://localhost:8000/docs |
 | Qdrant dashboard | http://localhost:6333/dashboard |
 | MinIO API / console | localhost:9000 / http://localhost:9002 |
@@ -110,6 +112,40 @@ xoá tài liệu, hội thoại, vector hay cache model embedding.
 Console MinIO nằm ở **9002** vì `127.0.0.1:9001` đang bị service khác dùng
 (penpot trong môi trường này). Nếu máy bạn còn trống, đổi mapping lại trong
 `docker-compose.yml`.
+
+### Truy cập qua domain / Cloudflare Tunnel
+
+Service `proxy` (Caddy, host port **8090**) gộp UI và API về cùng origin:
+
+- `/api/*` → `api:8000` (giữ prefix, SSE được flush ngay);
+- `/docs`, `/openapi.json`, `/redoc` → `api:8000`;
+- còn lại → `frontend:3000`.
+
+`frontend/conf/conf.json` đặt `"api_url": ""` nên browser gọi relative
+`/api/v1/...`; không cần CORS và không hard-code host. Giá trị này được nhúng
+lúc build, phải build lại frontend khi đổi. Caddy đọc config lúc khởi động;
+sau khi sửa `Caddyfile` chạy `docker compose up -d --force-recreate proxy`.
+
+Với Cloudflare Tunnel, trong Zero Trust → Networks → Tunnels → tunnel đang
+chạy → Public Hostname của `rag.thuyetmt.io.vn`, đặt **Service =
+`http://localhost:8090`** (không phải 3000). DNS record của hostname phải là
+CNAME trỏ đúng tunnel đó — lỗi **1033** nghĩa là hostname đang gắn với tunnel
+khác hoặc tunnel không chạy.
+
+Nếu asset tĩnh trả 502 ngẫu nhiên, kiểm tra tunnel có connector lạ không
+(`cf tunnels list`, hoặc dashboard): mỗi connector phải trỏ về đúng máy chạy
+Caddy. Một connector thừa từ máy khác (token bị dùng lại) sẽ nhận một phần
+traffic và trả 502 vì ở đó không có `localhost:8090`. Gỡ connector thừa bằng
+`cf tunnels connections cleanup <tunnel-id> --client-id <id>` và dừng process
+đó; nếu không, phải rotate/recreate tunnel. Cache Rule Bypass chỉ là workaround
+tạm thời, không cần khi tunnel chỉ có một connector.
+
+Kiểm tra:
+
+```bash
+curl -sS https://rag.thuyetmt.io.vn/api/v1/health   # {"status":"ok"}
+curl -sSI https://rag.thuyetmt.io.vn/chat | head -1 # HTTP/2 200
+```
 
 ### Lưu trữ
 
@@ -212,7 +248,7 @@ service lỗi. 4-bit giữ reranker ở ~4,7 GB, chạy cùng embedder 8B (~11,3
    hai. Coi token là bí mật — `.env` đã được git-ignore.
 3. `./control.sh start` — build image, chạy Alembic, tạo bucket và seed
    principal dev khi `AUTH_DISABLED=true`.
-4. Mở http://localhost:3000/documents, upload PDF/DOCX/TXT, đợi trạng thái
+4. Mở http://localhost:8090/documents, upload PDF/DOCX/TXT, đợi trạng thái
    `ready`, rồi hỏi trong `/chat`.
 5. Reranker tải Qwen3-Reranker-4B ở lần start đầu (~8 GB, cache trong
    `reranker_cache`); healthcheck cho tối đa 15 phút. Chat fallback về dense
@@ -247,7 +283,8 @@ service lỗi. 4-bit giữ reranker ở ~4,7 GB, chạy cùng embedder 8B (~11,3
   `APP_CONFIG_FILE=/path/to/conf.json` để dùng file khác.
 - **Frontend** — `frontend/conf/conf.json` được import lúc build
   (`src/lib/config.ts`); `NEXT_PUBLIC_API_URL` và `NEXT_PUBLIC_API_PREFIX`
-  ghi đè lên. Phải build lại frontend sau khi sửa JSON.
+  ghi đè lên. `api_url` mặc định là `""` để gọi same-origin `/api/v1` qua
+  Caddy. Phải build lại frontend sau khi sửa JSON.
 
 ### Nhà cung cấp LLM
 

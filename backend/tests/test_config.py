@@ -7,7 +7,8 @@ def test_conf_json_provides_defaults():
     settings = Settings()
     assert settings.qdrant_collection == "chunks_qwen3_8b"
     assert settings.agent_max_retrieval_iterations == 3
-    assert settings.cors_origins == ["http://localhost:3000"]
+    assert "http://localhost:3000" in settings.cors_origins
+    assert "https://rag.thuyetmt.io.vn" in settings.cors_origins
 
 
 def test_environment_overrides_conf_json(monkeypatch):

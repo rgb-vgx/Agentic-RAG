@@ -5,7 +5,7 @@ mỗi mục trả lời ba câu hỏi — thay đổi để làm gì, tại sao 
 sau khi thay đổi thì kết quả/kiểm chứng ra sao.
 
 Phạm vi: từ commit `bdddc5a` (đưa hệ thống từ khung code thành luồng RAG chạy
-được) đến các thay đổi chưa commit ở thời điểm 2026-11-08.
+được) đến các thay đổi chưa commit ở thời điểm 2026-11-09.
 
 ## Trạng thái hiện tại
 
@@ -24,7 +24,9 @@ upload (PDF/DOCX/TXT/MD) → MinIO → RQ worker
   instruction, collection `chunks_qwen3_8b`); `bge-m3` là lựa chọn nhanh.
 - Embedding thay thế: TEI `bge-m3-vi-base` (profile, tắt mặc định).
 - Retrieval: dense-only; sparse vector vẫn được index nhưng tắt mặc định.
-- 61 unit test (không cần infra) + 29 integration test (Postgres thật).
+- 68 unit test (không cần infra) + 29 integration test (Postgres thật).
+- Truy cập web qua Caddy same-origin **:8090** (UI + `/api/v1`);
+  `https://rag.thuyetmt.io.vn` qua Cloudflare Tunnel trỏ vào cổng này.
 
 ## Danh sách commit
 
@@ -37,7 +39,9 @@ upload (PDF/DOCX/TXT/MD) → MinIO → RQ worker
 | `417a29b` | 2026-11-08 20:51 | Preview client-side, chunk inspector, download |
 | `af8a726` | 2026-11-08 21:09 | Sparse tokenizer tiếng Việt, phân trang chunk |
 | `4ed8a7c` | 2026-11-08 21:25 | Embedding mặc định bge-m3, tắt sparse |
-| _unreleased_ | 2026-11-08 | Markdown UI, giới hạn evidence cho synthesis |
+| `57f8a3e` | 2026-11-09 | qwen3-8b default, DeepSeek chat, Markdown UI, reranker wiring |
+| `9960a63` | 2026-11-09 | Qwen3-Reranker-4B qua transformers 4-bit |
+| _unreleased_ | 2026-11-09 | Markdown UI, evidence cap, DeepSeek, qwen3-8b, reranker, Caddy `/api` |
 
 ---
 
@@ -217,6 +221,51 @@ cross-encoder xếp lại ứng viên để đưa đúng điều khoản lên đ
 - Chỉ còn 1 câu trượt (rank 2); rerank 50 ứng viên ~9,3 s/query.
 - Chat end-to-end với rerank: trả lời đúng, 18,6 s; VRAM 11,3 GB / 12 GB
   (embedder 5,7 + reranker 4-bit 4,7).
+
+---
+
+### 6. Truy cập public: Caddy same-origin `/api` + Cloudflare Tunnel
+
+**Nghiệp vụ.** UI phải chạy được trên domain `https://rag.thuyetmt.io.vn/`
+qua Cloudflare Tunnel, nhưng bản build frontend đang nhúng
+`http://localhost:8000` — browser của người dùng ngoài không gọi được API,
+và CORS cũng chỉ mở cho `localhost:3000`.
+
+**Lý do / điều tra.**
+
+- Tunnel trả **1033**: hostname đang gắn với tunnel khác hoặc tunnel không
+  chạy, nên request không tới cloudflared.
+- Kể cả khi tunnel thông, một domain trỏ thẳng `frontend:3000` không có đường
+  dẫn tới API; tách API sang subdomain sẽ phải cấu hình thêm DNS, TLS và
+  CORS, trong khi UI chỉ cần same-origin.
+
+**Thay đổi.**
+
+- Thêm service `proxy` (Caddy, host **8090**): `/api/*` → `api:8000` với
+  `flush_interval -1` (SSE không bị buffer), `/docs`/`/openapi.json`/`/redoc`
+  → API, còn lại → `frontend:3000`.
+- `frontend/conf/conf.json`: `"api_url": ""` để client gọi relative
+  `/api/v1`; bỏ env runtime `NEXT_PUBLIC_API_URL` khỏi compose (giá trị này
+  được nhúng lúc build, không có tác dụng khi chạy).
+- CORS thêm `http://localhost:8090` và `https://rag.thuyetmt.io.vn` (dự phòng
+  khi gọi trực tiếp API, dù same-origin không cần CORS).
+
+**Kết quả kiểm chứng.**
+
+- `http://localhost:8090/api/v1/health` → `{"status":"ok"}`; `/chat` và
+  `/api/v1/models` → 200; SSE chat hoạt động qua proxy.
+- 68 unit test pass (cập nhật assertion CORS).
+- Việc còn lại thuộc Cloudflare dashboard: Public Hostname của
+  `rag.thuyetmt.io.vn` phải trỏ `http://localhost:8090`, DNS CNAME đúng
+  tunnel đang chạy.
+- Nguyên nhân 502 ngẫu nhiên sau đó: tunnel `d9610c4b` có **hai connector**
+  cùng token — connector thứ hai chạy từ mạng khác, nơi không có Caddy/API ở
+  `localhost:8090`. Cloudflare chia traffic sang connector đó nên ~50% request
+  (đặc biệt asset tĩnh và request IPv6) nhận 502, và request không hề tới
+  cloudflared/Caddy trên máy này. Gỡ connector thừa
+  (`cf tunnels connections cleanup ... --client-id ...`) và dừng process kia
+  thì IPv4/IPv6 đều 200 ổn định; cache edge hoạt động lại, không cần Cache
+  Rule Bypass.
 
 ---
 
