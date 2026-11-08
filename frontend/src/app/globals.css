@@ -976,8 +976,62 @@ button {
 
 .panel-actions {
   display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 6px;
   flex-shrink: 0;
+}
+
+.zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.zoom-controls button {
+  border: 0;
+  background: #fff;
+  color: var(--ink);
+  height: 100%;
+  min-width: 28px;
+  padding: 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  transition: background 0.16s ease;
+}
+
+.zoom-controls button:hover:not(:disabled) {
+  background: var(--soft);
+}
+
+.zoom-controls button:disabled {
+  color: var(--muted-2);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.zoom-controls .zoom-value {
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 46px;
+}
+
+.zoom-controls.floating {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 3;
+  box-shadow: 0 10px 26px rgba(31, 35, 80, 0.16);
 }
 
 .panel-body {
@@ -987,6 +1041,7 @@ button {
 }
 
 .preview-body {
+  position: relative;
   padding: 0;
   overflow: hidden;
 }
@@ -1005,7 +1060,7 @@ button {
 
 /* docx-preview renders fixed A4 pages (~794px). Scale them to the panel. */
 .docx-preview-host section.docx-preview {
-  zoom: 0.55;
+  zoom: var(--docx-zoom, 0.55);
   margin: 0 auto 14px;
 }
 

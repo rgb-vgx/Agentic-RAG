@@ -2,13 +2,25 @@
 
 /** Documents page — list, client-side preview and chunk inspector. */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { api } from "@/lib/api";
 import { DOCUMENTS_POLL_INTERVAL_MS } from "@/lib/config";
 import type { ChunkItem, DocumentItem } from "@/lib/types";
 
 const TEXT_TYPES = new Set(["txt", "md", "markdown"]);
 const PREVIEW_TYPES = new Set(["docx", "pdf", "txt", "md", "markdown"]);
+const MIN_ZOOM = 0.3;
+const MAX_ZOOM = 2;
+
+function clampZoom(value: number): number {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
+}
 
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -23,6 +35,7 @@ export default function DocumentsPage() {
   const [previewNonce, setPreviewNonce] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [textPreview, setTextPreview] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
 
   const [chunks, setChunks] = useState<ChunkItem[]>([]);
   const [chunksLoading, setChunksLoading] = useState(false);
@@ -132,6 +145,7 @@ export default function DocumentsPage() {
           const url = URL.createObjectURL(blob);
           objectUrlRef.current = url;
           setPreviewUrl(url);
+          setZoom(1);
         } else if (selectedType === "docx") {
           const { renderAsync } = await import("docx-preview");
           const container = docxContainerRef.current;
@@ -142,8 +156,11 @@ export default function DocumentsPage() {
             inWrapper: true,
             ignoreLastRenderedPageBreak: false,
           });
+          // Fit the fixed A4 page (~794px) to the preview panel by default.
+          setZoom(fitDocxZoom());
         } else {
           setTextPreview(await blob.text());
+          setZoom(1);
         }
       })
       .catch((err) => {
@@ -187,6 +204,27 @@ export default function DocumentsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  function fitDocxZoom(): number {
+    const container = docxContainerRef.current;
+    if (!container) return 0.55;
+    const available = container.clientWidth - 28;
+    // Fit to width, but never enlarge past 100% on wide panels.
+    return Math.min(
+      1,
+      clampZoom(Math.round((available / 793.7) * 100) / 100)
+    );
+  }
+
+  function stepZoom(delta: number) {
+    setZoom((current) =>
+      clampZoom(Math.round((current + delta) * 100) / 100)
+    );
+  }
+
+  function resetZoom() {
+    setZoom(selectedType === "docx" ? fitDocxZoom() : 1);
   }
 
   async function removeDocument(id: string) {
@@ -321,19 +359,26 @@ export default function DocumentsPage() {
             )}
 
             {selectedDoc && selectedType === "docx" && (
-              <div ref={docxContainerRef} className="docx-preview-host" />
+              <div
+                ref={docxContainerRef}
+                className="docx-preview-host"
+                style={{ "--docx-zoom": zoom } as CSSProperties}
+              />
             )}
 
             {selectedDoc && selectedType === "pdf" && previewUrl && (
               <iframe
                 className="pdf-preview"
-                src={previewUrl}
+                src={`${previewUrl}#zoom=${Math.round(zoom * 100)}`}
                 title={selectedDoc.filename}
               />
             )}
 
             {selectedDoc && TEXT_TYPES.has(selectedType) && (
-              <pre className="text-preview">
+              <pre
+                className="text-preview"
+                style={{ fontSize: `${13 * zoom}px` }}
+              >
                 {textPreview ?? (previewLoading ? "Đang tải…" : "")}
               </pre>
             )}
@@ -343,6 +388,41 @@ export default function DocumentsPage() {
             )}
             {previewError && (
               <div className="error-banner preview-error">{previewError}</div>
+            )}
+
+            {selectedDoc && PREVIEW_TYPES.has(selectedType) && (
+              <div
+                className="zoom-controls floating"
+                role="group"
+                aria-label="Zoom"
+              >
+                <button
+                  type="button"
+                  onClick={() => stepZoom(-0.1)}
+                  disabled={zoom <= MIN_ZOOM}
+                  aria-label="Thu nhỏ"
+                  title="Thu nhỏ"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  className="zoom-value"
+                  onClick={resetZoom}
+                  title="Về mức mặc định"
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => stepZoom(0.1)}
+                  disabled={zoom >= MAX_ZOOM}
+                  aria-label="Phóng to"
+                  title="Phóng to"
+                >
+                  +
+                </button>
+              </div>
             )}
           </div>
         </section>
