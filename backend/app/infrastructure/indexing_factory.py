@@ -43,5 +43,5 @@ def build_retriever() -> HybridRetriever:
         client=get_async_qdrant_client(),
         collection=settings.qdrant_collection,
         dense_dim=settings.embedding_dim,
-        enable_sparse=True,
+        enable_sparse=settings.retrieval_enable_sparse,
     )

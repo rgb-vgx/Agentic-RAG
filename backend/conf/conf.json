@@ -10,7 +10,8 @@
   "ingestion_queue": "ingestion",
 
   "qdrant_url": "http://localhost:6333",
-  "qdrant_collection": "chunks_vi",
+  "qdrant_collection": "chunks_ollama",
+  "retrieval_enable_sparse": false,
 
   "s3_endpoint_url": "http://localhost:9000",
   "s3_bucket": "agentic-rag",
@@ -31,8 +32,9 @@
   ],
 
   "embedding_provider": "openai",
-  "embedding_model": "Adc05102002/bge-m3-vi-base",
+  "embedding_model": "bge-m3",
   "embedding_dim": 1024,
+  "embedding_base_url": "http://localhost:11434/v1",
 
   "rerank_provider": "cohere",
   "rerank_model": "rerank-multilingual-v3.0",

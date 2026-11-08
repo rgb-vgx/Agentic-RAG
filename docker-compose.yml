@@ -87,13 +87,13 @@ services:
       ANTHROPIC_EXTRA_HEADERS: ${RAG_ANTHROPIC_EXTRA_HEADERS:-{}}
       ANTHROPIC_THINKING_TYPE: ${RAG_ANTHROPIC_THINKING_TYPE:-}
       ANTHROPIC_OUTPUT_EFFORT: ${RAG_ANTHROPIC_OUTPUT_EFFORT:-}
-      # Embedding backend: TEI (default) or Ollama bge-m3.
+      # Embedding backend: Ollama bge-m3 (default) or TEI.
       # Switch with ./control.sh embeddings <tei|ollama>
       EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-openai}
-      EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-Adc05102002/bge-m3-vi-base}
+      EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-bge-m3}
       EMBEDDING_DIM: ${RAG_EMBEDDING_DIM:-1024}
-      EMBEDDING_BASE_URL: ${RAG_EMBEDDING_BASE_URL:-http://tei:80/v1}
-      QDRANT_COLLECTION: ${RAG_QDRANT_COLLECTION:-chunks_vi}
+      EMBEDDING_BASE_URL: ${RAG_EMBEDDING_BASE_URL:-http://host.docker.internal:11434/v1}
+      QDRANT_COLLECTION: ${RAG_QDRANT_COLLECTION:-chunks_ollama}
     # Reach Ollama running on the host (OPENAI_BASE_URL in backend/.env.example)
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -126,10 +126,10 @@ services:
       # Must match api: ingestion and query embeddings have to use the same
       # encoder and Qdrant collection.
       EMBEDDING_PROVIDER: ${RAG_EMBEDDING_PROVIDER:-openai}
-      EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-Adc05102002/bge-m3-vi-base}
+      EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-bge-m3}
       EMBEDDING_DIM: ${RAG_EMBEDDING_DIM:-1024}
-      EMBEDDING_BASE_URL: ${RAG_EMBEDDING_BASE_URL:-http://tei:80/v1}
-      QDRANT_COLLECTION: ${RAG_QDRANT_COLLECTION:-chunks_vi}
+      EMBEDDING_BASE_URL: ${RAG_EMBEDDING_BASE_URL:-http://host.docker.internal:11434/v1}
+      QDRANT_COLLECTION: ${RAG_QDRANT_COLLECTION:-chunks_ollama}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

@@ -93,8 +93,8 @@ Usage: ./control.sh <command>
   seed            Seed the dev tenant/user/membership (AUTH_DISABLED principal)
   bucket          Create the S3/MinIO bucket if it does not exist
   embeddings BACKEND
-                  Switch embedding backend: tei (bge-m3-vi-base, GPU) or
-                  ollama (bge-m3). Each backend has its own Qdrant collection.
+                  Switch embedding backend: ollama (bge-m3, default) or
+                  tei (bge-m3-vi-base, GPU). Each has its own Qdrant collection.
 
 Endpoints after start:
   API       http://localhost:8000/docs

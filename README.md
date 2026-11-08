@@ -123,19 +123,21 @@ the mapping back in `docker-compose.yml`.
 intend to delete all data. `start` reuses the same volumes, so re-running it
 is safe.
 
-### Embedding backend: TEI (default) vs Ollama
+### Embedding backend: Ollama (default) vs TEI
 
 Two encoders are available. Each writes to its own Qdrant collection because
-vectors from different models are not comparable.
+vectors from different models are not comparable. On the 850-chunk corpus,
+official `bge-m3` scored 17/20 top-1 (MRR 0.906) while the
+`bge-m3-vi-base` fine-tune scored 0/20 — hence Ollama is the default.
 
 | Backend | Model | Endpoint | Collection |
 |---|---|---|---|
-| `tei` (default) | `Adc05102002/bge-m3-vi-base`, 1024 dims | `http://tei:80/v1` | `chunks_vi` |
-| `ollama` | `bge-m3`, 1024 dims | `http://host.docker.internal:11434/v1` | `chunks_ollama` |
+| `ollama` (default) | `bge-m3`, 1024 dims | `http://host.docker.internal:11434/v1` | `chunks_ollama` |
+| `tei` | `Adc05102002/bge-m3-vi-base`, 1024 dims | `http://tei:80/v1` | `chunks_vi` |
 
 ```bash
-./control.sh embeddings ollama   # use Ollama bge-m3
-./control.sh embeddings tei      # back to the GPU TEI service
+./control.sh embeddings ollama   # default: Ollama bge-m3
+./control.sh embeddings tei      # GPU TEI with the vi fine-tune
 ```
 
 The command rewrites `RAG_EMBEDDING_*` / `RAG_QDRANT_COLLECTION` in the
@@ -159,10 +161,10 @@ batch 64). Both can run alongside the `qwen3.5:9b` chat model — about
    ```
    AUTH_DISABLED=true
    RAG_EMBEDDING_PROVIDER=openai
-   RAG_EMBEDDING_MODEL=Adc05102002/bge-m3-vi-base
+   RAG_EMBEDDING_MODEL=bge-m3
    RAG_EMBEDDING_DIM=1024
-   RAG_EMBEDDING_BASE_URL=http://tei:80/v1
-   RAG_QDRANT_COLLECTION=chunks_vi
+   RAG_EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1
+   RAG_QDRANT_COLLECTION=chunks_ollama
    ```
    Optional Anthropic-compatible proxy (enables `deepseek-v4.1-flash`):
    ```
@@ -223,8 +225,9 @@ batch 64). Both can run alongside the `qwen3.5:9b` chat model — about
   overrides the shared `OPENAI_BASE_URL`, so chat can go to Ollama while
   embeddings go to the TEI service (`http://tei:80/v1` in compose,
   `http://localhost:8080/v1` outside Docker).
-- The local stack serves `Adc05102002/bge-m3-vi-base` (1024 dims) through
-  `text-embeddings-inference`, and chat through Ollama (`qwen3.5:9b`).
+- The local stack serves `bge-m3` (1024 dims) through Ollama by default;
+  `Adc05102002/bge-m3-vi-base` through `text-embeddings-inference` remains
+  available as the alternative. Chat goes through Ollama (`qwen3.5:9b`).
   Thinking models need `openai_reasoning_effort: "none"` (conf.json) or
   they spend the whole token budget on reasoning and return empty content.
 - Chat validates citations before emitting token frames, so the client
@@ -265,8 +268,8 @@ API/worker use `qdrant:6333` internally. Retrieval needs it; if Qdrant is
 up but the collection is empty, chat returns the insufficiency message
 rather than crashing. The collection is created by the first ingestion
 job, with its dense dimension taken from `embedding_dim` — changing the
-embedding model requires a new collection (this stack uses `chunks_vi`
-at 1024 dims).
+embedding model requires a new collection (this stack uses `chunks_ollama`
+at 1024 dims by default; `chunks_vi` holds the TEI alternative).
 
 ### Supported upload formats
 
@@ -320,7 +323,7 @@ previewed (download instead).
 | Agent orchestration | **LangGraph `StateGraph`** with `TypedDict` state | Serializable state → PostgresSaver checkpointing possible later; centralized orchestrator (no multi-agent swarm) |
 | Streaming | `graph.astream(stream_mode="updates")` → service layer → **sse-starlette** `EventSourceResponse` | Node updates become `status` frames; answer tokens emitted only **after** citation validation (backend owns citation truth, §7.5) |
 | Vector store | **Qdrant** with named vectors `dense` + `sparse`, payload indexes on `tenant_id/knowledge_base_id/chunk_set_id/active` | Tenant isolation enforced server-side in the query filter, never client-side only (§15.2) |
-| Hybrid fusion | **RRF (k=60)** over dense + sparse ranks | Rank-based only — raw scores from the two channels are incomparable |
+| Hybrid fusion | **RRF (k=60)** over dense + sparse ranks, but sparse is **disabled by default** (`retrieval_enable_sparse`) | Benchmark on 850 Vietnamese legal chunks: dense-only 18/20 top-1 vs sparse 7/20 and any RRF weight ≤ 13/20. Sparse vectors are still indexed so a better encoder (IDF/SPLADE) can be evaluated later |
 | Qdrant client | **AsyncQdrantClient** on the query path (FastAPI/LangGraph), sync `QdrantClient` in the RQ worker | Async client (stable since 1.6) keeps the event loop free; the worker is process-bound anyway |
 | Qdrant access | Two clients from `indexing_factory`: `get_async_qdrant_client()` (retrieval) / `get_qdrant_client()` (indexing) | Clear boundary: reads never block, writes stay simple and synchronous in the worker |
 | Sparse encoding | Deterministic BM25-style hash encoder, Unicode-aware: indexes Vietnamese words whole plus accent-stripped variants ("nghỉ" and "nghi") | Accent-insensitive queries still match; no model weights for the MVP, and the interface allows swapping in SPLADE if the benchmark justifies it |
@@ -456,8 +459,8 @@ paths are wired to Postgres.
   `DELETE` enqueues the vector/file cleanup job
 - ✅ Dense + sparse vectors written at index time; retrieval filtered by
   the caller's visibility snapshot
-- ✅ Local models wired: Ollama `qwen3.5:9b` for chat, TEI
-  `bge-m3-vi-base` (1024 dims) for embeddings
+- ✅ Local models wired: Ollama `qwen3.5:9b` for chat, Ollama `bge-m3`
+  (1024 dims) for embeddings (TEI `bge-m3-vi-base` available as alternative)
 - ⏳ Frontend Google OAuth wiring (AUTH_DISABLED works for local dev;
   invite-only Google login has no UI yet)
 - ⏳ P1 hardening: ingestion state machine, injection defenses

@@ -122,19 +122,21 @@ Console MinIO nằm ở **9002** vì `127.0.0.1:9001` đang bị service khác d
 thực sự muốn xoá toàn bộ dữ liệu. `start` dùng lại đúng các volume đó, nên
 chạy lại nhiều lần vẫn an toàn.
 
-### Backend embedding: TEI (mặc định) và Ollama
+### Backend embedding: Ollama (mặc định) và TEI
 
 Có hai encoder. Mỗi encoder ghi vào collection Qdrant riêng vì vector từ các
-model khác nhau không so sánh được với nhau.
+model khác nhau không so sánh được với nhau. Trên corpus 850 chunk, `bge-m3`
+chính thức đạt 17/20 top-1 (MRR 0.906) còn bản fine-tune `bge-m3-vi-base`
+chỉ 0/20 — vì vậy Ollama là mặc định.
 
 | Backend | Model | Endpoint | Collection |
 |---|---|---|---|
-| `tei` (mặc định) | `Adc05102002/bge-m3-vi-base`, 1024 chiều | `http://tei:80/v1` | `chunks_vi` |
-| `ollama` | `bge-m3`, 1024 chiều | `http://host.docker.internal:11434/v1` | `chunks_ollama` |
+| `ollama` (mặc định) | `bge-m3`, 1024 chiều | `http://host.docker.internal:11434/v1` | `chunks_ollama` |
+| `tei` | `Adc05102002/bge-m3-vi-base`, 1024 chiều | `http://tei:80/v1` | `chunks_vi` |
 
 ```bash
-./control.sh embeddings ollama   # dùng bge-m3 qua Ollama
-./control.sh embeddings tei      # quay lại TEI chạy GPU
+./control.sh embeddings ollama   # mặc định: bge-m3 qua Ollama
+./control.sh embeddings tei      # TEI GPU với bản fine-tune tiếng Việt
 ```
 
 Lệnh này ghi lại `RAG_EMBEDDING_*` / `RAG_QDRANT_COLLECTION` trong `.env` ở
@@ -158,10 +160,10 @@ khoảng 7,7 GB / 12 GB VRAM.
    ```
    AUTH_DISABLED=true
    RAG_EMBEDDING_PROVIDER=openai
-   RAG_EMBEDDING_MODEL=Adc05102002/bge-m3-vi-base
+   RAG_EMBEDDING_MODEL=bge-m3
    RAG_EMBEDDING_DIM=1024
-   RAG_EMBEDDING_BASE_URL=http://tei:80/v1
-   RAG_QDRANT_COLLECTION=chunks_vi
+   RAG_EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1
+   RAG_QDRANT_COLLECTION=chunks_ollama
    ```
    Tuỳ chọn: proxy tương thích Anthropic (bật model `deepseek-v4.1-flash`):
    ```
@@ -218,8 +220,9 @@ khoảng 7,7 GB / 12 GB VRAM.
   tất định cho phát triển). `EMBEDDING_BASE_URL` ghi đè `OPENAI_BASE_URL`
   dùng chung, nên chat có thể đi Ollama trong khi embedding đi TEI
   (`http://tei:80/v1` trong compose, `http://localhost:8080/v1` ngoài Docker).
-- Stack local phục vụ `Adc05102002/bge-m3-vi-base` (1024 chiều) qua
-  `text-embeddings-inference`, và chat qua Ollama (`qwen3.5:9b`). Model
+- Stack local phục vụ `bge-m3` (1024 chiều) qua Ollama theo mặc định;
+  `Adc05102002/bge-m3-vi-base` qua `text-embeddings-inference` vẫn là lựa
+  chọn thay thế. Chat đi qua Ollama (`qwen3.5:9b`). Model
   "thinking" cần `openai_reasoning_effort: "none"` (conf.json), nếu không nó
   sẽ dùng hết token budget cho reasoning và trả content rỗng.
 - Chat kiểm tra citation trước khi phát token, nên client không bao giờ nhận
@@ -259,7 +262,8 @@ Stack compose có Qdrant (`localhost:6333` / gRPC `6334`) và API/worker dùng
 `qdrant:6333` nội bộ. Retrieval cần nó; nếu Qdrant chạy nhưng collection
 rỗng, chat trả message thiếu bằng chứng chứ không crash. Collection được tạo
 bởi job ingest đầu tiên, với số chiều dense lấy từ `embedding_dim` — đổi model
-embedding cần collection mới (stack này dùng `chunks_vi` với 1024 chiều).
+embedding cần collection mới (stack này dùng `chunks_ollama` với 1024 chiều
+theo mặc định; `chunks_vi` giữ lựa chọn TEI).
 
 ### Định dạng upload hỗ trợ
 
@@ -310,7 +314,7 @@ không rời khỏi browser. Fidelity thấp hơn Office editor với layout ph�
 | Điều phối agent | **LangGraph `StateGraph`** với state `TypedDict` | State serializable → có thể checkpoint bằng PostgresSaver sau này; orchestrator tập trung (không phải multi-agent swarm) |
 | Streaming | `graph.astream(stream_mode="updates")` → service layer → **sse-starlette** `EventSourceResponse` | Cập nhật node thành frame `status`; token trả lời chỉ phát **sau** khi citation được validate (backend sở hữu chân lý citation, §7.5) |
 | Vector store | **Qdrant** với named vector `dense` + `sparse`, payload index trên `tenant_id/knowledge_base_id/chunk_set_id/active` | Cô lập tenant được thực thi phía server trong filter query, không chỉ phía client (§15.2) |
-| Fusion hybrid | **RRF (k=60)** trên rank dense + sparse | Chỉ dựa trên rank — điểm thô của hai kênh không so sánh được |
+| Fusion hybrid | **RRF (k=60)** trên rank dense + sparse, nhưng sparse **tắt mặc định** (`retrieval_enable_sparse`) | Benchmark 850 chunk pháp lý tiếng Việt: dense-only 18/20 top-1, sparse 7/20, mọi mức RRF ≤ 13/20. Vector sparse vẫn được index để sau này đánh giá encoder tốt hơn (IDF/SPLADE) |
 | Qdrant client | **AsyncQdrantClient** trên đường query (FastAPI/LangGraph), `QdrantClient` sync trong worker RQ | Async client (ổn định từ 1.6) giữ event loop rảnh; worker vốn đã bound theo process |
 | Truy cập Qdrant | Hai client từ `indexing_factory`: `get_async_qdrant_client()` (retrieval) / `get_qdrant_client()` (indexing) | Ranh giới rõ: đọc không block, ghi đơn giản và đồng bộ trong worker |
 | Sparse encoding | Bộ mã hoá hash kiểu BM25 tất định, Unicode-aware: index nguyên từ tiếng Việt kèm biến thể bỏ dấu ("nghỉ" và "nghi") | Query không dấu vẫn khớp; MVP không cần model weights, interface cho phép thay bằng SPLADE nếu benchmark chứng minh đáng chi phí |
@@ -441,7 +445,7 @@ với Postgres.
 - ✅ Thay đổi từ review production vòng 1: giới hạn loop, publish-after-verify, citation grounding, upload gate, Qdrant async
 - ✅ Upload → object storage → RQ đã nối (`POST /documents`), `DELETE` enqueue job dọn vector/file
 - ✅ Vector dense + sparse được ghi lúc index; retrieval lọc theo snapshot visibility của caller
-- ✅ Model local đã nối: Ollama `qwen3.5:9b` cho chat, TEI `bge-m3-vi-base` (1024 chiều) cho embedding
+- ✅ Model local đã nối: Ollama `qwen3.5:9b` cho chat, Ollama `bge-m3` (1024 chiều) cho embedding (TEI `bge-m3-vi-base` là lựa chọn thay thế)
 - ✅ Hỗ trợ upload PDF, DOCX, TXT/MD (legacy `.doc` bị từ chối)
 - ⏳ Nối Google OAuth cho frontend (AUTH_DISABLED đủ cho local; login Google invite-only chưa có UI)
 - ⏳ Hardening P1: ingestion state machine, phòng chống injection

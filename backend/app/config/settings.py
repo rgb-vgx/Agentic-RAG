@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "chunks"
     qdrant_api_key: str | None = None
+    # Sparse vectors are still indexed, but the benchmark showed the hash
+    # BM25 channel hurting dense-only retrieval on Vietnamese legal text
+    # (7/20 vs 18/20 top-1), so it is off by default.
+    retrieval_enable_sparse: bool = False
 
     # Object storage
     s3_endpoint_url: str | None = None
