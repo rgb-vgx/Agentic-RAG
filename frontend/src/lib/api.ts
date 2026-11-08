@@ -72,6 +72,7 @@ export const api = {
     request<{
       items: ChunkItem[];
       total: number;
+      truncated?: boolean;
       chunk_set_id?: string | null;
     }>(`/documents/${id}/chunks`),
 

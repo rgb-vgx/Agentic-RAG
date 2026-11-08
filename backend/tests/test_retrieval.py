@@ -105,3 +105,23 @@ async def test_evaluator_llm_failure_falls_back_to_partial():
     )
     result = await evaluator.evaluate(evidence_group)
     assert result.status == EvidenceStatus.PARTIALLY_SUFFICIENT
+
+
+def test_sparse_encode_keeps_vietnamese_words_whole():
+    indices, values = SparseEncoder().encode("nghỉ phép năm")
+    assert len(indices) == len(values)
+    # three words, each indexed with its accent-stripped variant
+    assert len(indices) == 6
+
+
+def test_sparse_encode_is_diacritic_insensitive():
+    with_marks = set(SparseEncoder().encode("nghỉ phép năm")[0])
+    without_marks = set(SparseEncoder().encode("nghi phep nam")[0])
+    # the unaccented forms are present in both vocabularies
+    assert len(with_marks & without_marks) == 3
+
+
+def test_sparse_encode_handles_d_stroke():
+    with_d = set(SparseEncoder().encode("đường")[0])
+    without_d = set(SparseEncoder().encode("duong")[0])
+    assert with_d & without_d

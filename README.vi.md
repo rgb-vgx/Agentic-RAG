@@ -313,7 +313,7 @@ không rời khỏi browser. Fidelity thấp hơn Office editor với layout ph�
 | Fusion hybrid | **RRF (k=60)** trên rank dense + sparse | Chỉ dựa trên rank — điểm thô của hai kênh không so sánh được |
 | Qdrant client | **AsyncQdrantClient** trên đường query (FastAPI/LangGraph), `QdrantClient` sync trong worker RQ | Async client (ổn định từ 1.6) giữ event loop rảnh; worker vốn đã bound theo process |
 | Truy cập Qdrant | Hai client từ `indexing_factory`: `get_async_qdrant_client()` (retrieval) / `get_qdrant_client()` (indexing) | Ranh giới rõ: đọc không block, ghi đơn giản và đồng bộ trong worker |
-| Sparse encoding | Bộ mã hoá hash kiểu BM25 tất định (interface cho phép thay bằng SPLADE) | MVP không cần model weights; benchmark sẽ quyết định SPLADE có đáng chi phí |
+| Sparse encoding | Bộ mã hoá hash kiểu BM25 tất định, Unicode-aware: index nguyên từ tiếng Việt kèm biến thể bỏ dấu ("nghỉ" và "nghi") | Query không dấu vẫn khớp; MVP không cần model weights, interface cho phép thay bằng SPLADE nếu benchmark chứng minh đáng chi phí |
 | Hàng đợi job | **RQ** (không phải Celery) | Đơn giản, native Redis, đủ cho một queue `ingestion` với idempotency theo `job_id` |
 | Trừu tượng LLM | `BaseLLMClient` (`complete` / `stream` / `complete_json`), import provider lazy | SDK OpenAI + Anthropic sau một interface; test import base type mà không cần cài SDK |
 | Embeddings | Interface provider + fallback offline `LocalHashEmbeddingProvider` | Test và CI chạy không cần API key |

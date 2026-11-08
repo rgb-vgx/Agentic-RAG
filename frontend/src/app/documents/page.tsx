@@ -27,6 +27,7 @@ export default function DocumentsPage() {
   const [chunks, setChunks] = useState<ChunkItem[]>([]);
   const [chunksLoading, setChunksLoading] = useState(false);
   const [chunksError, setChunksError] = useState<string | null>(null);
+  const [chunksTruncated, setChunksTruncated] = useState(false);
   const [openChunkId, setOpenChunkId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -80,11 +81,15 @@ export default function DocumentsPage() {
     setChunksLoading(true);
     setChunks([]);
     setChunksError(null);
+    setChunksTruncated(false);
     setOpenChunkId(null);
     api
       .listChunks(selectedId)
-      .then(({ items }) => {
-        if (!cancelled) setChunks(items);
+      .then(({ items, truncated }) => {
+        if (!cancelled) {
+          setChunks(items);
+          setChunksTruncated(Boolean(truncated));
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -345,7 +350,10 @@ export default function DocumentsPage() {
         <aside className="panel doc-chunks">
           <div className="panel-header">
             <span>Chunks</span>
-            <span className="doc-count">{chunks.length}</span>
+            <span className="doc-count">
+              {chunks.length}
+              {chunksTruncated ? "+" : ""}
+            </span>
           </div>
           <div className="panel-body chunk-panel-body">
             {chunksLoading && <div className="empty">Đang tải chunk…</div>}

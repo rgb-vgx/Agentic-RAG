@@ -246,7 +246,7 @@ async def download_document(
 @router.get("/{document_id}/chunks")
 async def get_document_chunks(
     document_id: UUID,
-    limit: int = 200,
+    limit: int = 2000,
     repo: DocumentRepository = Depends(_repo),
     principal: Principal = Depends(get_principal),
 ) -> dict:
@@ -284,14 +284,24 @@ async def get_document_chunks(
             FieldCondition(key="active", match=MatchValue(value=True)),
         ]
     )
+    max_items = max(1, min(limit, 5000))
+    points = []
+    next_offset = None
     try:
-        points, _ = await client.scroll(
-            collection_name=settings.qdrant_collection,
-            scroll_filter=scroll_filter,
-            limit=max(1, min(limit, 500)),
-            with_payload=True,
-            with_vectors=False,
-        )
+        # Scroll in batches: a 182-page law document has ~845 chunks, far
+        # more than a single scroll page. `total` must reflect all of them.
+        while len(points) < max_items:
+            batch, next_offset = await client.scroll(
+                collection_name=settings.qdrant_collection,
+                scroll_filter=scroll_filter,
+                limit=min(512, max_items - len(points)),
+                offset=next_offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            points.extend(batch)
+            if next_offset is None:
+                break
     except UnexpectedResponse as exc:
         if getattr(exc, "status_code", None) == 404:
             # Collection not created yet (nothing ingested on this backend)
@@ -335,6 +345,7 @@ async def get_document_chunks(
     return {
         "items": [item.model_dump() for item in items],
         "total": len(items),
+        "truncated": next_offset is not None,
         "chunk_set_id": chunk_set_id,
     }
 
