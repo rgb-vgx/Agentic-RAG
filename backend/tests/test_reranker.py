@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from app.agentic_rag.retrieval.tools import RerankTool
 from app.domain.retrieval.types import RetrievedEvidence
-from app.infrastructure.rerankers.llamacpp import LlamaCppReranker
+from app.infrastructure.rerankers.service import HttpReranker
 
 
 def _evidence(count: int) -> list[RetrievedEvidence]:
@@ -26,12 +26,16 @@ def test_parse_scores_maps_by_index():
             {"index": 0, "relevance_score": 0.1},
         ]
     }
-    assert LlamaCppReranker._parse_scores(body, 3) == [0.1, 0.0, 0.9]
+    assert HttpReranker._parse_scores(body, 3) == [0.1, 0.0, 0.9]
 
 
-def test_parse_scores_accepts_cohere_style():
+def test_parse_scores_accepts_score_field():
     body = {"results": [{"index": 0, "score": 0.4}]}
-    assert LlamaCppReranker._parse_scores(body, 2) == [0.4, 0.0]
+    assert HttpReranker._parse_scores(body, 2) == [0.4, 0.0]
+
+
+def test_parse_scores_empty_response_is_zero():
+    assert HttpReranker._parse_scores({}, 2) == [0.0, 0.0]
 
 
 async def test_rerank_tool_reorders_by_score():

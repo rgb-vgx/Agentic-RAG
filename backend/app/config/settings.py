@@ -137,15 +137,19 @@ class Settings(BaseSettings):
     embedding_timeout_seconds: float = 900.0
 
     # Reranking
-    rerank_provider: str = "llamacpp"
+    rerank_provider: str = "service"
     rerank_model: str = "Qwen3-Reranker-4B"
     rerank_api_key: str = ""
     rerank_enabled: bool = False
     rerank_url: str | None = None
     rerank_path: str = "/rerank"
-    rerank_timeout_seconds: float = 120.0
+    rerank_timeout_seconds: float = 300.0
     rerank_candidates: int = 50
     rerank_top_n: int = 10
+    # Instruction shown to Qwen3-Reranker (English, per the model card).
+    rerank_instruction: str = (
+        "Given a Vietnamese question, retrieve passages that answer the question"
+    )
 
     # Auth
     google_client_id: str = ""

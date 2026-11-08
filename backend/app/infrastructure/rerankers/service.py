@@ -1,35 +1,40 @@
-"""llama.cpp reranker client (Qwen3-Reranker via `llama-server --reranking`)."""
+"""HTTP reranker client for the Qwen3-Reranker service (`/rerank`)."""
 
 from typing import Any
 
 import httpx
 
 
-class LlamaCppReranker:
-    """Scores (query, document) pairs through llama.cpp's /rerank endpoint."""
+class HttpReranker:
+    """Sends (query, documents) to the reranker service and returns scores."""
 
     def __init__(
         self,
         url: str,
         model: str,
         path: str = "/rerank",
-        timeout: float = 120.0,
+        timeout: float = 300.0,
+        instruction: str = "",
     ):
         self.url = url.rstrip("/")
         self.model = model
         self.path = path if path.startswith("/") else f"/{path}"
         self.timeout = timeout
+        self.instruction = instruction
 
     async def rerank(self, query: str, documents: list[str]) -> list[float]:
-        """Return one score per input document, in input order."""
+        """Return one [0, 1] score per document, in input order."""
         if not documents:
             return []
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "query": query,
             "documents": documents,
             "top_n": len(documents),
         }
+        if self.instruction:
+            payload["instruction"] = self.instruction
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(f"{self.url}{self.path}", json=payload)
             response.raise_for_status()
@@ -37,12 +42,7 @@ class LlamaCppReranker:
 
     @staticmethod
     def _parse_scores(body: Any, count: int) -> list[float]:
-        """Accept the common rerank response shapes.
-
-        llama.cpp returns {"results": [{"index": i, "relevance_score": s}]}.
-        Cohere-style responses use the same field names; some servers return
-        "score" instead. Missing indices keep a neutral score.
-        """
+        """Map the service's `{results: [{index, relevance_score}]}` response."""
         results = body.get("results") if isinstance(body, dict) else body
         if not results:
             return [0.0] * count

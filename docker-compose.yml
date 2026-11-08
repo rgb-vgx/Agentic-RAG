@@ -38,19 +38,30 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
-  # llama.cpp reranker — Qwen3-Reranker-4B Q4_K_M, exposed at /rerank.
-  # The GGUF lives in ref/models (git-ignored); download it with the command
-  # in the README before starting the stack.
+  # Qwen3-Reranker-4B scoring service (transformers + bitsandbytes, 4-bit).
+  # llama.cpp's /rerank uses rank pooling and does not score this causal-LM
+  # reranker correctly (upstream support is still an open PR), so the
+  # official implementation runs in a small FastAPI service.
   reranker:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    build: ./reranker
     gpus: all
-    command: >
-      -m /models/Qwen3-Reranker-4B.Q4_K_M.gguf
-      --reranking --host 0.0.0.0 --port 8080 -c 4096 -ngl 99
+    environment:
+      MODEL_ID: Qwen/Qwen3-Reranker-4B
+      LOAD_IN_4BIT: "true"
+      BATCH_SIZE: "4"
+      MAX_LENGTH: "4096"
+      HF_HOME: /models/hf
     volumes:
-      - ./ref/models:/models:ro
+      - reranker_cache:/models/hf
     ports:
-      - "8083:8080"
+      - "8083:8000"
+    shm_size: "2gb"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 900s
 
   # Text Embeddings Inference — serves the Vietnamese BGE-M3 embedding model.
   # OpenAI-compatible at /v1/embeddings (used by EMBEDDING_BASE_URL).
@@ -117,7 +128,8 @@ services:
       QDRANT_COLLECTION: ${RAG_QDRANT_COLLECTION:-chunks_qwen3_8b}
       # Reranker (llama.cpp service). Disable with RAG_RERANK_ENABLED=false.
       RERANK_ENABLED: ${RAG_RERANK_ENABLED:-true}
-      RERANK_URL: ${RAG_RERANK_URL:-http://reranker:8080}
+      RERANK_URL: ${RAG_RERANK_URL:-http://reranker:8000}
+      RERANK_PATH: ${RAG_RERANK_PATH:-/rerank}
       RERANK_MODEL: ${RAG_RERANK_MODEL:-Qwen3-Reranker-4B}
       RERANK_CANDIDATES: ${RAG_RERANK_CANDIDATES:-50}
       RERANK_TOP_N: ${RAG_RERANK_TOP_N:-10}
@@ -181,3 +193,4 @@ volumes:
   qdrant_data:
   minio_data:
   tei_data:
+  reranker_cache:

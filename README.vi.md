@@ -10,6 +10,7 @@ Agentic-RAG/
 ├── Proposal Design (Tiếng Việt).md # Bản tiếng Việt, line-aligned
 ├── README.vi.md                    # Bản tiếng Việt của README (tệp này)
 ├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + API + worker + frontend (+ TEI tuỳ chọn)
+├── reranker/                       # Service chấm điểm Qwen3-Reranker-4B (transformers, 4-bit)
 ├── backend/                        # Python 3.12 + FastAPI
 │   ├── app/
 │   │   ├── api/v1/                 # Endpoint REST + SSE (auth, documents, conversations, chat)
@@ -101,6 +102,7 @@ xoá tài liệu, hội thoại, vector hay cache model embedding.
 | Qdrant dashboard | http://localhost:6333/dashboard |
 | MinIO API / console | localhost:9000 / http://localhost:9002 |
 | TEI (embeddings, tuỳ chọn) | http://localhost:8080 |
+| Reranker (Qwen3-Reranker) | http://localhost:8083 |
 | Postgres | localhost:5436 (`agentic` / `agentic`, db `agentic_rag`) |
 | Redis | localhost:6379 |
 | Ollama (trên host) | http://localhost:11434 |
@@ -117,6 +119,7 @@ Console MinIO nằm ở **9002** vì `127.0.0.1:9001` đang bị service khác d
 | `agentic-rag_qdrant_data` | Các collection vector (`chunks_qwen3_8b`, `chunks_ollama`, `chunks_vi`) |
 | `agentic-rag_minio_data` | File gốc đã upload |
 | `agentic-rag_tei_data` | Cache Hugging Face cho TEI (chỉ khi bật profile TEI) |
+| `agentic-rag_reranker_cache` | Cache Hugging Face cho Qwen3-Reranker-4B (~8 GB) |
 
 `stop` chỉ dừng container. Không chạy `docker compose down -v` trừ khi bạn
 thực sự muốn xoá toàn bộ dữ liệu. `start` dùng lại đúng các volume đó, nên
@@ -157,6 +160,27 @@ point để tài liệu 4096 chiều không vượt HTTP timeout.
 Khi chỉ giữ `qwen3-embedding:8b`, stack dùng ~6,3 GB / 12 GB VRAM; chat chạy
 trên proxy DeepSeek từ xa.
 
+### Reranking (Qwen3-Reranker-4B)
+
+Retrieval lấy 50 ứng viên dense, `RerankTool` giữ top 10. Service `reranker/`
+chạy implementation chính thức của Qwen3-Reranker-4B bằng transformers (4-bit
+bitsandbytes) sau `POST /rerank`; backend gửi query + document kèm heading
+context và nhận `{index, relevance_score}`.
+
+Vì sao không dùng llama.cpp/Ollama: Qwen3-Reranker là causal LM, chấm điểm
+bằng xác suất token kế tiếp là "yes" hay "no". `/rerank` của llama.cpp dùng
+rank pooling cho classifier reranker (bge-reranker) nên trả score vô nghĩa với
+model này (hỗ trợ upstream vẫn là PR mở); Ollama không có endpoint rerank.
+
+Benchmark (850 chunk, 20 câu): dense top-50 đạt 18/20 top-1, MRR 0.950; sau
+rerank: 19/20 top-1, 20/20 top-5, MRR 0.975. Rerank 50 ứng viên mất ~9 giây
+mỗi query trên RTX 3060.
+
+Lần chạy đầu tải ~8 GB vào volume `reranker_cache` (healthcheck cho 15 phút).
+Tắt bằng `RAG_RERANK_ENABLED=false`; backend fallback về thứ tự retrieval nếu
+service lỗi. 4-bit giữ reranker ở ~4,7 GB, chạy cùng embedder 8B (~11,3 GB /
+12 GB).
+
 ### Checklist lần chạy đầu
 
 1. Pull model embedding Ollama (chat chạy trên proxy từ xa):
@@ -190,6 +214,9 @@ trên proxy DeepSeek từ xa.
    principal dev khi `AUTH_DISABLED=true`.
 4. Mở http://localhost:3000/documents, upload PDF/DOCX/TXT, đợi trạng thái
    `ready`, rồi hỏi trong `/chat`.
+5. Reranker tải Qwen3-Reranker-4B ở lần start đầu (~8 GB, cache trong
+   `reranker_cache`); healthcheck cho tối đa 15 phút. Chat fallback về dense
+   cho đến khi service sẵn sàng.
 
 ### Lỗi thường gặp
 
@@ -356,6 +383,7 @@ không rời khỏi browser. Fidelity thấp hơn Office editor với layout ph�
 | Publish chunk-set | **Publish-after-verify**: upsert set mới → xác nhận point đã ghi → retire set cũ → lưu `documents.active_chunk_set_id` (Postgres = nguồn sự thật) | Reprocess không bao giờ để tài liệu không có chunk set query được |
 | Citation grounding | Hai tầng: marker hợp lệ so với registry bất biến **cộng** claim-support — câu khẳng định không có citation bị loại, nếu còn quá ít nội dung được hỗ trợ thì trả message thiếu bằng chứng rõ ràng | Chỉ xoá `[R99]` sẽ để lại câu hallucination |
 | Chọn chunking | Constraint-first: generate → evaluate (structural + semantic) → lọc hard-constraint → xếp hạng; benchmark retrieval offline (Layer 3) hiệu chỉnh (§5.4) | Không bao giờ promote một chiến lược chỉ dựa trên LLM tự đánh giá |
+| Reranking | Qwen3-Reranker-4B trong service transformers 4-bit (`/rerank`), top-50 → top-10 | `/rerank` của llama.cpp dùng rank pooling, sai với causal-LM reranker; Ollama không có endpoint rerank. Benchmark: 18 → 19/20 top-1, MRR 0.950 → 0.975 |
 | Routing | `low` → fast path, `high`/multi-hop → agentic, còn lại standard (§15.1) | Agentic retrieval **không** phải đường mặc định |
 | Versioning | Mỗi `agent_run` ghi version workflow/prompt/model/embedding/retrieval (§9.7) | Khả năng tái lập — kết quả không tái lập được là lỗi observability |
 
@@ -469,7 +497,7 @@ với Postgres.
 - ✅ Thay đổi từ review production vòng 1: giới hạn loop, publish-after-verify, citation grounding, upload gate, Qdrant async
 - ✅ Upload → object storage → RQ đã nối (`POST /documents`), `DELETE` enqueue job dọn vector/file
 - ✅ Vector dense + sparse được ghi lúc index; retrieval lọc theo snapshot visibility của caller
-- ✅ Model đã nối: `deepseek-v4.1-flash` (proxy từ xa) cho chat, Ollama `qwen3-embedding:8b` (4096 chiều, instruction) cho embedding; bge-m3 là lựa chọn nhanh, qwen local và TEI tắt mặc định
+- ✅ Model đã nối: `deepseek-v4.1-flash` (proxy từ xa) cho chat, Ollama `qwen3-embedding:8b` (4096 chiều, instruction) cho embedding, Qwen3-Reranker-4B (transformers 4-bit) rerank top-50 → top-10 (19/20 top-1, MRR 0.975); bge-m3 là lựa chọn nhanh
 - ✅ Hỗ trợ upload PDF, DOCX, TXT/MD (legacy `.doc` bị từ chối)
 - ⏳ Nối Google OAuth cho frontend (AUTH_DISABLED đủ cho local; login Google invite-only chưa có UI)
 - ⏳ Hardening P1: ingestion state machine, phòng chống injection

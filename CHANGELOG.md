@@ -179,6 +179,45 @@ còn 2 câu trượt (đều rank 2), trong khi bge-m3 có 1 câu rank 9.
 - Chat DeepSeek trả lời “0% [R1]” trong 8,7s.
 - VRAM: qwen3-embedding:8b 5,73 GB; GPU ~6,3 GB / 12 GB.
 
+### 5. Reranking Qwen3-Reranker-4B (transformers 4-bit)
+
+**Nghiệp vụ.** Top-5 của retrieval đã 20/20 nhưng top-1 chỉ 18/20 — cần một
+cross-encoder xếp lại ứng viên để đưa đúng điều khoản lên đầu.
+
+**Lý do / điều tra runtime.**
+
+- **Ollama** không có endpoint rerank (`/api/rerank`, `/v1/rerank` trả 404;
+  docs và release mới nhất v0.40.15 không có). Model community
+  `dengcao/Qwen3-Reranker-4B` chỉ chạy được qua chat/raw, không trả score ổn
+  định.
+- **llama.cpp** `/rerank` dùng rank pooling cho classifier reranker
+  (bge-reranker) và trả score vô nghĩa với Qwen3-Reranker (causal LM chấm
+  bằng xác suất token yes/no); hỗ trợ upstream vẫn là PR mở (#20009).
+  Đã thử tự dựng prompt chính thức + `/completion` logprobs; tokenization
+  giống hệt HF (85 token) nhưng logits `yes/no` vẫn phẳng với cả Q4 và Q8.
+- **transformers** (official code) cho score dứt khoát: cặp relevant 0.998,
+  irrelevant 0.0.
+
+**Thay đổi.**
+
+- Service `reranker/` (FastAPI + transformers 4-bit bitsandbytes,
+  `POST /rerank`) chạy đúng prompt/model card. Cache model trong volume
+  `reranker_cache` (~8 GB, tải lần đầu).
+- Backend `HttpReranker` gọi `/rerank`; retrieval lấy **50 ứng viên** khi
+  rerank bật, giữ **top 10**; fallback về thứ tự retrieval nếu service lỗi.
+- Chạy cùng embedder 8B: batch 4, max length 4096, 4-bit (~4,7 GB).
+
+**Kết quả (850 chunk, 20 câu).**
+
+| Cấu hình | Top-1 | Top-5 | MRR |
+|---|---|---|---|
+| dense top-50 | 18/20 | 20/20 | 0.950 |
+| **dense top-50 → rerank top-10** | **19/20** | **20/20** | **0.975** |
+
+- Chỉ còn 1 câu trượt (rank 2); rerank 50 ứng viên ~9,3 s/query.
+- Chat end-to-end với rerank: trả lời đúng, 18,6 s; VRAM 11,3 GB / 12 GB
+  (embedder 5,7 + reranker 4-bit 4,7).
+
 ---
 
 ## 4ed8a7c — Embedding mặc định bge-m3, tắt sparse
@@ -458,6 +497,7 @@ delete dọn vector/file. 49 test pass.
 | Chat mặc định | `deepseek-v4.1-flash` qua Anthropic-compatible proxy |
 | Chat local | đã tắt (`qwen3.5:9b`); model file vẫn trên đĩa |
 | Embedding | Ollama `qwen3-embedding:8b`, 4096 chiều + query instruction |
+| Reranker | Qwen3-Reranker-4B (transformers 4-bit), top-50 → top-10 |
 | Qdrant collection | `chunks_qwen3_8b` (850 point) |
 | Collection thay thế | `chunks_ollama` (bge-m3, nhanh) và `chunks_vi` (TEI, tắt mặc định) |
 | Sparse | tắt (`retrieval_enable_sparse=false`), vector vẫn index |
@@ -498,6 +538,14 @@ delete dọn vector/file. 49 test pass.
 11. **Dọn model local không dùng**: `ollama rm qwen3.5:9b` (≈6,5 GB đĩa) và
     `docker rmi ghcr.io/huggingface/text-embeddings-inference:86-1.9.2`
     (nếu không bao giờ dùng lại TEI). Chưa chạy vì là thao tác xoá.
+12. **Reranker chiếm VRAM đáng kể**: embedder 8B (5,7 GB) + reranker 4-bit
+    (4,7 GB) ≈ 11,3 GB / 12 GB. Nếu cần dư VRAM, giảm batch hoặc tắt rerank
+    (`RAG_RERANK_ENABLED=false`) và chấp nhận top-1 thấp hơn.
+13. **Rerank latency** ~9,3 s/query cho 50 ứng viên; muốn nhanh hơn có thể
+    giảm `rerank_candidates` (ví dụ 30) và đo lại trade-off.
+14. **GGUF/llama.cpp dư thừa**: `ref/models/Qwen3-Reranker-4B.*.gguf` và
+    image `ghcr.io/ggml-org/llama.cpp:server-cuda` không còn dùng; có thể xoá
+    để giải phóng đĩa (chưa chạy).
 
 ## Ghi chú vận hành
 

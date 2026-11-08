@@ -9,6 +9,7 @@ Agentic-RAG/
 ├── Proposal Design (Tiếng Việt).md # Bản tiếng Việt, line-aligned
 ├── README.vi.md                    # Vietnamese translation
 ├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + API + worker + frontend (+ optional TEI)
+├── reranker/                       # Qwen3-Reranker-4B scoring service (transformers, 4-bit)
 ├── backend/                        # Python 3.12 + FastAPI
 │   ├── app/
 │   │   ├── api/v1/                 # REST + SSE endpoints (auth, documents, conversations, chat)
@@ -102,6 +103,7 @@ conversations, vectors, or the embedding-model cache.
 | Qdrant dashboard | http://localhost:6333/dashboard |
 | MinIO API / console | localhost:9000 / http://localhost:9002 |
 | TEI (embeddings, optional) | http://localhost:8080 |
+| Reranker (Qwen3-Reranker) | http://localhost:8083 |
 | Postgres | localhost:5436 (`agentic` / `agentic`, db `agentic_rag`) |
 | Redis | localhost:6379 |
 | Ollama (on the host) | http://localhost:11434 |
@@ -118,6 +120,7 @@ the mapping back in `docker-compose.yml`.
 | `agentic-rag_qdrant_data` | Vector collections (`chunks_qwen3_8b`, `chunks_ollama`, `chunks_vi`) |
 | `agentic-rag_minio_data` | Original uploaded files |
 | `agentic-rag_tei_data` | Hugging Face cache for TEI (only when the TEI profile is enabled) |
+| `agentic-rag_reranker_cache` | Hugging Face cache for Qwen3-Reranker-4B (~8 GB) |
 
 `stop` only stops containers. Do not run `docker compose down -v` unless you
 intend to delete all data. `start` reuses the same volumes, so re-running it
@@ -158,6 +161,30 @@ Ollama), `EMBEDDING_TIMEOUT_SECONDS=900`, and Qdrant upserts are split into
 With only `qwen3-embedding:8b` resident, the stack uses ~6.3 GB / 12 GB VRAM;
 chat runs on the remote DeepSeek proxy.
 
+### Reranking (Qwen3-Reranker-4B)
+
+Retrieval fetches 50 dense candidates and `RerankTool` keeps the top 10.
+`reranker/` runs the official Qwen3-Reranker-4B implementation with
+transformers (4-bit bitsandbytes) behind `POST /rerank`; the backend sends
+the query plus documents with their heading context and receives
+`{index, relevance_score}`.
+
+Why not llama.cpp/Ollama: Qwen3-Reranker is a causal LM scored by the
+probability of the next token being "yes" vs "no". llama.cpp's `/rerank`
+uses rank pooling for classifier rerankers (e.g. bge-reranker) and returns
+meaningless scores here (upstream support is still an open PR); Ollama has
+no rerank endpoint at all.
+
+Benchmark (850 chunks, 20 queries): dense top-50 gives 18/20 top-1, MRR
+0.950; after reranking, 19/20 top-1, 20/20 top-5, MRR 0.975. Reranking 50
+candidates takes ~9 s/query on the RTX 3060.
+
+The first start downloads ~8 GB into the `reranker_cache` volume (the
+healthcheck allows 15 minutes). Disable with `RAG_RERANK_ENABLED=false`; the
+backend falls back to retrieval order if the service is unavailable. 4-bit
+keeps the reranker at ~4.7 GB, so it coexists with the 8B embedder
+(~11.3 GB / 12 GB).
+
 ### First-run checklist
 
 1. Pull the Ollama embedding model (chat runs on the remote proxy):
@@ -191,6 +218,9 @@ chat runs on the remote DeepSeek proxy.
    seeds the dev principal when `AUTH_DISABLED=true`.
 4. Open http://localhost:3000/documents, upload a PDF/DOCX/TXT, wait for status
    `ready`, then ask a question in `/chat`.
+5. The reranker downloads Qwen3-Reranker-4B on its first start (~8 GB, cached
+   in `reranker_cache`); the healthcheck allows up to 15 minutes. Chat falls
+   back to dense order until it is ready.
 
 ### Common issues
 
@@ -367,6 +397,7 @@ previewed (download instead).
 | Chunk-set publish | **Publish-after-verify**: upsert new set → verify points written → retire old set → store `documents.active_chunk_set_id` (Postgres = source of truth) | Reprocessing can never leave a document without a queryable chunk set |
 | Citation grounding | Two-stage: marker validity against an immutable registry **plus** claim-support — uncited claim sentences are dropped, and if too little supported content remains the answer falls back to an explicit insufficiency message | Stripping `[R99]` alone would leave the hallucinated claim standing |
 | Chunking selection | Constraint-first: generate → evaluate (structural + semantic) → hard-constraint filter → rank; offline retrieval benchmark (Layer 3) calibrates (§5.4) | Never promote a strategy on LLM self-assessment alone |
+| Reranking | Qwen3-Reranker-4B in a transformers 4-bit service (`/rerank`), top-50 → top-10 | llama.cpp's `/rerank` rank pooling is wrong for causal-LM rerankers and Ollama has no rerank endpoint; benchmark: 18 → 19/20 top-1, MRR 0.950 → 0.975 |
 | Routing | `low` → fast path, `high`/multi-hop → agentic, else standard (§15.1) | Agentic retrieval is **not** the default path |
 | Versioning | Every `agent_run` records workflow/prompt/model/embedding/retrieval versions (§9.7) | Reproducibility — a result that can't be reproduced is an observability defect |
 
@@ -486,8 +517,9 @@ paths are wired to Postgres.
 - ✅ Dense + sparse vectors written at index time; retrieval filtered by
   the caller's visibility snapshot
 - ✅ Models wired: `deepseek-v4.1-flash` (remote proxy) for chat, Ollama
-  `qwen3-embedding:8b` (4096 dims, instruction) for embeddings; bge-m3 is
-  the fast alternative, local qwen chat and TEI are disabled by default
+  `qwen3-embedding:8b` (4096 dims, instruction) for embeddings, and
+  Qwen3-Reranker-4B (transformers 4-bit) reranking top-50 → top-10
+  (19/20 top-1, MRR 0.975); bge-m3 is the fast alternative
 - ⏳ Frontend Google OAuth wiring (AUTH_DISABLED works for local dev;
   invite-only Google login has no UI yet)
 - ⏳ P1 hardening: ingestion state machine, injection defenses

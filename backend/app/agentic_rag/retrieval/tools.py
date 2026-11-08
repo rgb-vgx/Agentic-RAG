@@ -120,9 +120,17 @@ class RerankTool:
         if self.reranker is None or not evidence:
             return evidence[:top_k]
         try:
-            scored = await self.reranker.rerank(
-                query, [e.content for e in evidence]
-            )
+            # The embedding text already carries the section path; give the
+            # cross-encoder the same context ("Điều 22 ... > Khoản 1").
+            documents = [
+                (
+                    f"{' > '.join(e.heading_path)}\n{e.content}"
+                    if e.heading_path
+                    else e.content
+                )
+                for e in evidence
+            ]
+            scored = await self.reranker.rerank(query, documents)
         except Exception as exc:  # reranker down → keep retrieval order
             import logging
 
