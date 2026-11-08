@@ -2,7 +2,12 @@
 
 import { authHeaders } from "./auth";
 import { API_PREFIX } from "./config";
-import type { ConversationItem, DocumentItem, ModelOption } from "./types";
+import type {
+  ChunkItem,
+  ConversationItem,
+  DocumentItem,
+  ModelOption,
+} from "./types";
 
 const PREFIX = API_PREFIX;
 
@@ -43,9 +48,49 @@ export const api = {
       body: form, // fetch sets multipart boundary itself
     });
     if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
+      const body = (await response.json().catch(() => null)) as {
+        detail?: string;
+      } | null;
+      throw new Error(
+        body?.detail ?? `${response.status} ${response.statusText}`
+      );
     }
     return (await response.json()) as DocumentItem;
+  },
+
+  fetchDocumentBlob: async (id: string) => {
+    const response = await fetch(`${PREFIX}/documents/${id}/download`, {
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+    return response.blob();
+  },
+
+  listChunks: (id: string) =>
+    request<{
+      items: ChunkItem[];
+      total: number;
+      chunk_set_id?: string | null;
+    }>(`/documents/${id}/chunks`),
+
+  downloadDocument: async (id: string, filename: string) => {
+    const response = await fetch(`${PREFIX}/documents/${id}/download`, {
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   },
 
   deleteDocument: (id: string) =>

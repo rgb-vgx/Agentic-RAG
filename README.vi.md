@@ -9,7 +9,7 @@ Agentic-RAG/
 ├── Proposal Design.md              # Thiết kế kỹ thuật v1.1 (EN)
 ├── Proposal Design (Tiếng Việt).md # Bản tiếng Việt, line-aligned
 ├── README.vi.md                    # Bản tiếng Việt của README (tệp này)
-├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + API + worker + frontend
+├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + TEI + API + worker + frontend
 ├── backend/                        # Python 3.12 + FastAPI
 │   ├── app/
 │   │   ├── api/v1/                 # Endpoint REST + SSE (auth, documents, conversations, chat)
@@ -270,6 +270,21 @@ embedding cần collection mới (stack này dùng `chunks_vi` với 1024 chiề
 | TXT / MD | built-in | heading Markdown `#` |
 | DOC | — | bị từ chối khi validate — lưu lại thành `.docx` (định dạng nhị phân cũ) |
 
+### Xem trước file (client-side)
+
+Cột giữa của `/documents` preview file đang chọn hoàn toàn trong browser —
+không cần service hay backend convert:
+
+| Định dạng | Cách render |
+|---|---|
+| DOCX | `docx-preview` (render OOXML → HTML) |
+| PDF | viewer native của browser qua blob URL |
+| TXT / MD | plain text |
+
+File lấy từ `GET /documents/{id}/download` với cùng auth header như API và
+không rời khỏi browser. Fidelity thấp hơn Office editor với layout phức tạp;
+`.doc`/`.xls`/`.pptx` không preview được (dùng Download).
+
 ### Chọn model
 
 `backend/conf/conf.json` công bố các model được chọn qua `llm_models`
@@ -326,7 +341,8 @@ embedding cần collection mới (stack này dùng `chunks_vi` với 1024 chiề
 | POST | `/api/v1/documents` | Multipart upload (`file` + `scope` + `knowledge_base_id` tuỳ chọn); nhận PDF, DOCX, TXT/MD, lưu vào MinIO và enqueue job ingest RQ |
 | GET | `/api/v1/documents` | Liệt kê tài liệu được thấy (org + personal của mình) |
 | GET/DELETE | `/api/v1/documents/{id}` | Chỉ tài liệu được thấy / soft-delete (gated bởi `can_manage`) |
-| GET | `/api/v1/documents/{id}/chunks` | Liệt kê chunk có kiểm soát visibility (nội dung vẫn là stub) |
+| GET | `/api/v1/documents/{id}/chunks` | Chunk của chunk set đang active, đọc từ Qdrant và kiểm soát visibility (nội dung, heading path, trang, strategy) |
+| GET | `/api/v1/documents/{id}/download` | Tải file gốc, kiểm soát visibility, stream qua API (không lộ hostname MinIO) |
 | POST | `/api/v1/documents/{id}/quarantine` | Chỉ admin, tài liệu org; loại khỏi snapshot retrieval |
 | GET/POST | `/api/v1/conversations` | Hội thoại (riêng theo user) |
 | GET/DELETE | `/api/v1/conversations/{id}` | Lấy / xoá (riêng theo user) |
@@ -421,7 +437,7 @@ với Postgres.
 - ✅ Chọn model: allowlist server, validate `model` khi chat, ghi vào run, dropdown UI
 - ✅ Workflow chat đã nối: LangGraph chạy mỗi request, SSE status/token/citation/completed, lưu assistant message + run
 - ✅ Bypass auth cho development (`AUTH_DISABLED`, guard chỉ development)
-- ✅ Frontend chat (SSE) + documents (upload/poll/delete)
+- ✅ Frontend chat (SSE) + documents (upload/poll/delete/download, preview client-side, xem chunk)
 - ✅ Thay đổi từ review production vòng 1: giới hạn loop, publish-after-verify, citation grounding, upload gate, Qdrant async
 - ✅ Upload → object storage → RQ đã nối (`POST /documents`), `DELETE` enqueue job dọn vector/file
 - ✅ Vector dense + sparse được ghi lúc index; retrieval lọc theo snapshot visibility của caller

@@ -8,7 +8,7 @@ from app.ingestion.chunking.strategies import (
     TableAwareStrategy,
     count_tokens,
 )
-from app.ingestion.ir import BlockType
+from app.ingestion.ir import BlockType, DocumentBlock, DocumentSection
 
 
 def test_registry_has_nine_strategies():
@@ -67,3 +67,44 @@ def test_structural_evaluation_flags_coverage(prose_section):
     evaluation = result.evaluation
     assert evaluation.structural.source_coverage > 0.5
     assert evaluation.structural.heading_preservation > 0.0
+
+
+def test_subsections_are_never_dropped():
+    """A non-recursive winning strategy must not discard child sections."""
+    parent = DocumentSection(
+        section_id="s1",
+        title="Chương I",
+        level=1,
+        blocks=[
+            DocumentBlock(
+                block_id="b1",
+                block_type=BlockType.HEADING,
+                text="Chương I",
+                metadata={"heading_level": 1},
+            )
+        ],
+        subsections=[
+            DocumentSection(
+                section_id="s2",
+                title="Điều 1",
+                level=2,
+                blocks=[
+                    DocumentBlock(
+                        block_id="b2",
+                        block_type=BlockType.HEADING,
+                        text="Điều 1",
+                        metadata={"heading_level": 2},
+                    ),
+                    DocumentBlock(
+                        block_id="b3",
+                        block_type=BlockType.PARAGRAPH,
+                        text="Nội dung điều 1 quy định về tội phạm và hình phạt.",
+                    ),
+                ],
+            )
+        ],
+    )
+
+    chunks, _ = ChunkingSelector().select(parent, document_id="doc-1")
+
+    assert any("Nội dung điều 1" in chunk.content for chunk in chunks)

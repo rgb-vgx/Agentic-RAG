@@ -286,6 +286,302 @@ a {
   margin-top: 4px;
 }
 
+.doc-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.chunk-toggle,
+.download-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chunk-toggle:hover,
+.download-btn:hover {
+  border-color: var(--accent);
+}
+
+.chunk-list {
+  margin: 0 0 10px 14px;
+  padding-left: 14px;
+  border-left: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chunk-item {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.chunk-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.chunk-head .ref {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.chunk-content {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* ---- Documents workspace: list / preview / chunks ---- */
+
+.documents-page {
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.upload-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.upload-bar label {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.upload-zone.compact {
+  flex: 1;
+  padding: 10px 14px;
+  margin-bottom: 0;
+  font-size: 12px;
+}
+
+.doc-workspace {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 420px;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.panel-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.preview-body {
+  padding: 0;
+  overflow: hidden;
+}
+
+.docx-preview-host {
+  height: 100%;
+  overflow: auto;
+  padding: 12px;
+  background: #3b3f46;
+}
+
+.docx-preview-host .docx-wrapper {
+  background: transparent;
+  padding: 0;
+}
+
+.pdf-preview {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.text-preview {
+  margin: 0;
+  padding: 14px;
+  height: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.preview-status {
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.doc-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.doc-sidebar-list {
+  overflow-y: auto;
+}
+
+.doc-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.doc-item:hover {
+  background: var(--panel-2);
+}
+
+.doc-item.selected {
+  background: var(--panel-2);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.doc-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.chunk-panel-body {
+  padding: 8px;
+}
+
+.chunk-entry {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.chunk-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text);
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.chunk-entry-head .heading {
+  color: var(--muted);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chunk-entry-head .chunk-meta {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.chunk-entry-head .chevron {
+  color: var(--accent);
+}
+
+.chunk-detail {
+  border-top: 1px dashed var(--border);
+  padding: 8px 10px;
+}
+
+.preview-error {
+  margin: 12px;
+}
+
+@media (max-width: 1200px) {
+  .documents-page {
+    height: auto;
+    overflow: visible;
+  }
+
+  .doc-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: 220px 480px 320px;
+  }
+}
+
 .badge {
   font-size: 11px;
   font-weight: 600;

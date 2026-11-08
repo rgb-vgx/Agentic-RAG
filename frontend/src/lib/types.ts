@@ -23,6 +23,18 @@ export interface DocumentItem {
   } | null;
 }
 
+export interface ChunkItem {
+  chunk_id: string;
+  chunk_index: number;
+  content: string;
+  heading_path: string[];
+  page_start?: number | null;
+  page_end?: number | null;
+  strategy_name?: string | null;
+  section_id?: string | null;
+  parent_chunk_id?: string | null;
+}
+
 export interface ConversationItem {
   id: string;
   title: string;

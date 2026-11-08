@@ -13,12 +13,19 @@ MAX_TXT_BYTES = 5 * 1024 * 1024
 
 ALLOWED_MIME = {
     "application/pdf",
+    "application/x-pdf",
     "text/plain",
     "text/markdown",
+    "text/x-markdown",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/octet-stream",  # browsers sometimes send this for .txt/.docx
+    # Browsers/OS integrations are inconsistent for .docx (it is a ZIP)
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/wps-office.docx",
+    "application/octet-stream",
 }
 ALLOWED_EXTENSIONS = {"pdf", "txt", "md", "markdown", "docx"}
+TEXT_TYPES = {"txt", "md", "markdown"}
 
 
 class UploadValidationError(ValueError):
@@ -54,8 +61,11 @@ def validate_upload(data: bytes, filename: str, content_type: str | None) -> Val
         raise UploadValidationError("Empty file", 400)
 
     mime = (content_type or "application/octet-stream").split(";")[0].strip().lower()
-    if mime not in ALLOWED_MIME:
-        raise UploadValidationError(f"Unsupported content type '{mime}'", 415)
+    text_ok = file_type in TEXT_TYPES and mime.startswith("text/")
+    if mime not in ALLOWED_MIME and not text_ok:
+        raise UploadValidationError(
+            f"Unsupported content type '{mime}' for .{file_type}", 415
+        )
 
     if file_type == "pdf":
         # Magic bytes — a renamed file must not reach the PDF parser

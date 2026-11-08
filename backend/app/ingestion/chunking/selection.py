@@ -41,6 +41,8 @@ class ChunkingSelector:
     """Rule-based candidate generation + constraint-first selection."""
 
     PROSE_ONLY = {BlockType.PARAGRAPH, BlockType.HEADING, BlockType.LIST_ITEM}
+    # Only these strategies walk `section.subsections` themselves.
+    RECURSIVE_STRATEGIES = {"structure_aware", "table_aware"}
 
     def __init__(self, evaluator: ChunkingEvaluator | None = None):
         self.evaluator = evaluator or ChunkingEvaluator()
@@ -158,6 +160,15 @@ class ChunkingSelector:
             strategy = RecursiveCharacterStrategy(target_tokens, overlap_tokens)
             ctx = ChunkContext(document_id, target_tokens, overlap_tokens)
             chunks = strategy.chunk(section, document_id, ctx)
+            chunks = self._include_subsections(
+                section,
+                chunks,
+                "recursive",
+                document_id,
+                target_tokens,
+                overlap_tokens,
+                retrieval_metrics_by_strategy,
+            )
             evaluation = self.evaluator.evaluate(
                 chunks, section, "recursive", strategy.version, target_tokens
             )
@@ -180,6 +191,15 @@ class ChunkingSelector:
             preferred = "table_aware" if BlockType.TABLE in block_types else "code_aware"
             for candidate, chunks, evaluation in specialized:
                 if candidate.strategy_name == preferred:
+                    chunks = self._include_subsections(
+                        section,
+                        chunks,
+                        candidate.strategy_name,
+                        document_id,
+                        target_tokens,
+                        overlap_tokens,
+                        retrieval_metrics_by_strategy,
+                    )
                     return chunks, SelectionResult(
                         chosen_strategy=candidate.strategy_name,
                         composite=True,
@@ -199,12 +219,51 @@ class ChunkingSelector:
             return (*retrieval, quality)
 
         best_candidate, best_chunks, best_evaluation = max(evaluated, key=rank)
+        best_chunks = self._include_subsections(
+            section,
+            best_chunks,
+            best_candidate.strategy_name,
+            document_id,
+            target_tokens,
+            overlap_tokens,
+            retrieval_metrics_by_strategy,
+        )
         return best_chunks, SelectionResult(
             chosen_strategy=best_candidate.strategy_name,
             composite=False,
             evaluation=best_evaluation,
             rejected=rejected,
         )
+
+    def _include_subsections(
+        self,
+        section: DocumentSection,
+        chunks: list[Chunk],
+        strategy_name: str,
+        document_id: str,
+        target_tokens: int,
+        overlap_tokens: int,
+        retrieval_metrics_by_strategy: dict[str, dict[str, float]],
+    ) -> list[Chunk]:
+        """Never drop subsection content.
+
+        `recursive`, `paragraph_grouping` and `semantic` only read
+        `section.blocks`, so a winning strategy that does not recurse would
+        silently discard every child section. Chunk those children with their
+        own selection and append the result.
+        """
+        if not section.subsections or strategy_name in self.RECURSIVE_STRATEGIES:
+            return chunks
+        for subsection in section.subsections:
+            sub_chunks, _ = self.select(
+                subsection,
+                document_id,
+                target_tokens,
+                overlap_tokens,
+                retrieval_metrics_by_strategy=retrieval_metrics_by_strategy,
+            )
+            chunks.extend(sub_chunks)
+        return chunks
 
 
 # Composite helper: apply a block-type → splitter mapping inside a section.

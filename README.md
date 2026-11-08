@@ -8,7 +8,7 @@ Agentic-RAG/
 ├── Proposal Design.md              # Technical design v1.1 (EN)
 ├── Proposal Design (Tiếng Việt).md # Bản tiếng Việt, line-aligned
 ├── README.vi.md                    # Vietnamese translation
-├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + API + worker + frontend
+├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + TEI + API + worker + frontend
 ├── backend/                        # Python 3.12 + FastAPI
 │   ├── app/
 │   │   ├── api/v1/                 # REST + SSE endpoints (auth, documents, conversations, chat)
@@ -277,6 +277,22 @@ at 1024 dims).
 | TXT / MD | built-in | Markdown `#` headings |
 | DOC | — | rejected at validation — save as `.docx` (legacy binary format) |
 
+### File preview (client-side)
+
+The middle panel of `/documents` previews the selected file entirely in the
+browser — no extra service and no conversion backend:
+
+| Format | Renderer |
+|---|---|
+| DOCX | `docx-preview` (renders the OOXML to HTML) |
+| PDF | native browser viewer via a blob URL |
+| TXT / MD | plain text |
+
+The file comes from `GET /documents/{id}/download` with the same auth headers
+as the rest of the API, and never leaves the browser. Fidelity is lower than
+a full Office editor for complex layouts; `.doc`/`.xls`/`.pptx` are not
+previewed (download instead).
+
 ### Model selection
 
 `backend/conf/conf.json` exposes the selectable models through
@@ -335,7 +351,8 @@ at 1024 dims).
 | POST | `/api/v1/documents` | Multipart upload (`file` + `scope` + optional `knowledge_base_id`); accepts PDF, DOCX, TXT/MD, stores to MinIO and enqueues an RQ ingestion job |
 | GET | `/api/v1/documents` | List visible documents (org + own personal) |
 | GET/DELETE | `/api/v1/documents/{id}` | Visible docs only / soft-delete (gated by `can_manage`) |
-| GET | `/api/v1/documents/{id}/chunks` | Visibility-gated chunk listing (content still a stub) |
+| GET | `/api/v1/documents/{id}/chunks` | Chunks of the active chunk set, read from Qdrant and visibility-gated (content, heading path, page, strategy) |
+| GET | `/api/v1/documents/{id}/download` | Original file download, visibility-gated and streamed through the API (no MinIO hostname exposed) |
 | POST | `/api/v1/documents/{id}/quarantine` | Admin only, org documents; removes it from retrieval snapshots |
 | GET/POST | `/api/v1/conversations` | Conversations (private per user) |
 | GET/DELETE | `/api/v1/conversations/{id}` | Fetch / delete (private per user) |
@@ -433,7 +450,7 @@ paths are wired to Postgres.
 - ✅ Model selection: server allowlist, validated `model` on chat, recorded on the run, UI dropdown
 - ✅ Chat workflow wired: LangGraph runs per request, SSE status/token/citation/completed, assistant message + run persisted
 - ✅ Development auth bypass (`AUTH_DISABLED`, development-only guard)
-- ✅ Frontend chat (SSE) + documents (upload/poll/delete) pages
+- ✅ Frontend chat (SSE) + documents (upload/poll/delete/download, client-side preview, chunk inspector) pages
 - ✅ Production review round 1 changes: loop bound, publish-after-verify, citation grounding, upload gate, async Qdrant (worker wiring gaps below)
 - ✅ Upload → object storage → RQ enqueue wired (`POST /documents`), and
   `DELETE` enqueues the vector/file cleanup job
