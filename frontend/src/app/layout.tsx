@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import "@fontsource-variable/plus-jakarta-sans";
 import "./globals.css";
+import Sidebar from "@/components/Sidebar";
 
 export const metadata: Metadata = {
   title: "Agentic RAG — Document Q&A",
@@ -13,19 +14,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="vi">
       <body>
-        <div className="app-shell">
-          <nav className="sidebar">
-            <div className="brand">Agentic RAG</div>
-            <Link href="/chat" className="nav-link">
-              Chat
-            </Link>
-            <Link href="/documents" className="nav-link">
-              Documents
-            </Link>
-          </nav>
-          <main className="main">{children}</main>
+        <div className="app-backdrop">
+          <div className="app-frame">
+            <Sidebar />
+            <main className="app-main">{children}</main>
+          </div>
         </div>
       </body>
     </html>

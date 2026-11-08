@@ -2,6 +2,7 @@
 
 /** Chat page — sends queries, consumes the SSE stream, renders sources. */
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,17 +10,76 @@ import { api } from "@/lib/api";
 import { streamChat } from "@/lib/stream";
 import { useChatStore } from "@/store/chat";
 import type { ModelOption, StreamEvent, SourceReference } from "@/lib/types";
+import {
+  ArrowUpIcon,
+  ChevronDownIcon,
+  DocsIcon,
+  LayersIcon,
+  PlusIcon,
+  QuoteIcon,
+  SearchIcon,
+  SlidersIcon,
+  SparkIcon,
+  SparklesIcon,
+  UploadIcon,
+} from "@/components/icons";
+import Robot from "@/components/Robot";
 
 const STATUS_LABELS: Record<string, string> = {
-  resolve_context: "Resolving conversation context…",
-  analyze: "Analyzing your question…",
-  route: "Choosing retrieval path…",
-  plan: "Planning retrieval…",
-  retrieve: "Searching documents…",
-  evaluate: "Checking evidence…",
-  synthesize: "Writing the answer…",
-  validate_citations: "Validating citations…",
+  resolve_context: "Đang đọc ngữ cảnh hội thoại…",
+  analyze: "Đang phân tích câu hỏi…",
+  route: "Đang chọn cách truy xuất…",
+  plan: "Đang lập kế hoạch tìm kiếm…",
+  retrieve: "Đang tìm trong tài liệu…",
+  evaluate: "Đang kiểm tra bằng chứng…",
+  synthesize: "Đang viết câu trả lời…",
+  validate_citations: "Đang kiểm chứng trích dẫn…",
 };
+
+const SUGGESTIONS = [
+  {
+    title: "Hỏi đáp có căn cứ",
+    body: "Đặt câu hỏi trên toàn bộ tài liệu đã index, không chỉ một file.",
+    action: "Bắt đầu hỏi",
+    tone: "amber",
+    icon: LayersIcon,
+    href: null,
+  },
+  {
+    title: "Truy vết mọi trích dẫn",
+    body: "Mở đúng chunk, trang và tiêu đề của nguồn được trích dẫn.",
+    action: "Xem tài liệu",
+    tone: "sky",
+    icon: QuoteIcon,
+    href: "/documents",
+  },
+  {
+    title: "Giữ kho tri thức mới",
+    body: "Tải PDF, DOCX hoặc TXT và index lại trong vài phút.",
+    action: "Tải tài liệu",
+    tone: "mint",
+    icon: UploadIcon,
+    href: "/documents",
+  },
+];
+
+const PROMPTS = [
+  {
+    label: "Tìm nguồn",
+    icon: SearchIcon,
+    text: "Tìm trong tài liệu những đoạn liên quan đến ",
+  },
+  {
+    label: "Tóm tắt",
+    icon: SparklesIcon,
+    text: "Tóm tắt nội dung chính của tài liệu ",
+  },
+  {
+    label: "So sánh điều khoản",
+    icon: DocsIcon,
+    text: "So sánh các quy định về ",
+  },
+];
 
 /** Turn [R1] markers into link syntax so they can render as badges. */
 function citationify(text: string): string {
@@ -40,6 +100,7 @@ export default function ChatPage() {
     setStatus,
     setError,
     setStreaming,
+    reset,
   } = useChatStore();
 
   const [input, setInput] = useState("");
@@ -48,23 +109,26 @@ export default function ChatPage() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const hasConversation = messages.length > 0;
+
+  function startConversation() {
     api
       .createConversation()
       .then((conversation) => {
-        if (!cancelled) setConversationId(conversation.id);
+        setConversationId(conversation.id);
       })
       .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
+        setError(err instanceof Error ? err.message : String(err));
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [setError]);
+  }
+
+  useEffect(() => {
+    startConversation();
+    // Runs once on mount; startConversation only touches setState.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,14 +149,15 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
+    if (!hasConversation) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, statusNode]);
+  }, [messages, statusNode, hasConversation]);
 
   async function send() {
     const query = input.trim();
     if (!query || isStreaming) return;
     if (!conversationId) {
-      setError("Conversation is not ready yet");
+      setError("Cuộc hội thoại chưa sẵn sàng, thử lại sau một giây.");
       return;
     }
 
@@ -139,7 +204,9 @@ export default function ChatPage() {
         abortRef.current.signal
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       finishMessage(assistantId);
       abortRef.current = null;
@@ -153,106 +220,258 @@ export default function ChatPage() {
     }
   }
 
-  return (
-    <>
-      <header className="chat-header">
-        <h1>Document Q&amp;A</h1>
-        <div className="chat-controls">
-          {isStreaming && statusNode && (
-            <span className="status-line">
-              {STATUS_LABELS[statusNode] ?? statusNode}
-            </span>
-          )}
-          <select
-            className="model-select"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            disabled={isStreaming || models.length === 0}
-            aria-label="Model"
+  function usePrompt(text: string) {
+    setInput(text);
+    const field = inputRef.current;
+    if (!field) return;
+    field.focus();
+    field.setSelectionRange(text.length, text.length);
+  }
+
+  function newChat() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    reset();
+    setInput("");
+    setError(null);
+    setConversationId(null);
+    startConversation();
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  const composer = (
+    <div className="composer-wrap">
+      <div className="composer-meta">
+        <span>
+          <SparkIcon size={13} /> Trợ lý RAG nội bộ
+        </span>
+        <span className="composer-stack">
+          qwen3-embedding:8b · Qwen3-Reranker-4B
+        </span>
+      </div>
+
+      <form
+        className="composer"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send();
+        }}
+      >
+        <div className="composer-row">
+          <Link
+            href="/documents"
+            className="composer-plus"
+            aria-label="Thêm tài liệu"
+            title="Thêm tài liệu"
           >
-            {models.length === 0 && (
-              <option value="">Default model</option>
-            )}
-            {models.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label} ({option.provider})
-              </option>
-            ))}
-          </select>
+            <PlusIcon size={19} />
+          </Link>
+          <textarea
+            id="chat-input"
+            ref={inputRef}
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="Hỏi về tài liệu của bạn…"
+            rows={1}
+            disabled={isStreaming}
+            aria-label="Câu hỏi"
+          />
+          <button
+            type="submit"
+            className="send-button"
+            disabled={isStreaming || !input.trim()}
+            aria-label="Gửi câu hỏi"
+          >
+            <ArrowUpIcon size={19} />
+          </button>
+        </div>
+
+        <div className="composer-actions">
+          {PROMPTS.map(({ label, icon: Icon, text }) => (
+            <button
+              key={label}
+              type="button"
+              className="prompt-chip"
+              onClick={() => usePrompt(text)}
+              disabled={isStreaming}
+            >
+              <Icon size={15} />
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="prompt-chip prompt-chip-icon"
+            onClick={() => inputRef.current?.focus()}
+            aria-label="Thêm hành động"
+            title="Thêm hành động"
+          >
+            <SlidersIcon size={15} />
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+
+  return (
+    <div className="chat-page">
+      <header className="topbar">
+        <Link href="/chat" className="assistant-pill">
+          <span className="assistant-glyph">
+            <SparkIcon size={15} />
+          </span>
+          Agentic RAG
+          <span className="assistant-version">v1.0</span>
+          <ChevronDownIcon size={13} />
+        </Link>
+
+        <div className="topbar-title">Document Q&amp;A</div>
+
+        <div className="topbar-actions">
+          <label className="model-pill">
+            <span className="sr-only">Model</span>
+            <select
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              disabled={isStreaming || models.length === 0}
+              aria-label="Model"
+            >
+              {models.length === 0 && <option value="">Model mặc định</option>}
+              {models.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDownIcon size={12} />
+          </label>
+          <button type="button" className="primary-pill" onClick={newChat}>
+            <SparklesIcon size={15} />
+            <span className="primary-label">Cuộc trò chuyện mới</span>
+          </button>
         </div>
       </header>
 
-      {error && <div className="error-banner">{error}</div>}
+      {error && (
+        <div className="error-banner" role="alert">
+          {error}
+        </div>
+      )}
 
-      <div className="messages">
-        {messages.length === 0 && (
-          <div className="empty">
-            Ask a question about your uploaded documents.
-          </div>
-        )}
-
-        {messages.map((message) => (
-          <div key={message.id} className={`message ${message.role}`}>
-            {message.role === "assistant" ? (
-              message.content ? (
-                <div className="markdown">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      a: ({ href, children }) =>
-                        href?.startsWith("#ref-") ? (
-                          <span className="citation-ref">[{children}]</span>
-                        ) : (
-                          <a href={href} target="_blank" rel="noreferrer">
-                            {children}
-                          </a>
-                        ),
-                    }}
-                  >
-                    {citationify(message.content)}
-                  </ReactMarkdown>
-                </div>
-              ) : message.streaming && isStreaming ? (
-                <span className="status-line">Thinking…</span>
-              ) : null
-            ) : (
-              message.content
-            )}
-
-            {message.sources && message.sources.length > 0 && (
-              <div className="sources">
-                {message.sources.map((source) => (
-                  <div
-                    key={`${source.reference_id}-${source.chunk_id}`}
-                    className="source-item"
-                  >
-                    <span className="ref">[{source.reference_id}]</span>
-                    <span className="heading">
-                      {source.heading_path.join(" › ")}
-                      {source.page_start ? ` · p.${source.page_start}` : ""}
+      {hasConversation ? (
+        <div className="messages">
+          {messages.map((message) => (
+            <div key={message.id} className={`message ${message.role}`}>
+              {message.role === "assistant" ? (
+                <>
+                  <div className="assistant-meta">
+                    <span className="assistant-glyph small">
+                      <SparkIcon size={12} />
                     </span>
-                    <div className="snippet">{source.snippet}</div>
+                    Agentic RAG
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
+                  {message.content ? (
+                    <div className="markdown">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          a: ({ href, children }) =>
+                            href?.startsWith("#ref-") ? (
+                              <span className="citation-ref">{children}</span>
+                            ) : (
+                              <a href={href} target="_blank" rel="noreferrer">
+                                {children}
+                              </a>
+                            ),
+                        }}
+                      >
+                        {citationify(message.content)}
+                      </ReactMarkdown>
+                    </div>
+                  ) : message.streaming && isStreaming ? (
+                    <span className="status-line">
+                      <span className="status-dot" />
+                      {statusNode
+                        ? (STATUS_LABELS[statusNode] ?? statusNode)
+                        : "Đang suy nghĩ…"}
+                    </span>
+                  ) : null}
 
-      <div className="composer">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="Ask a question… (Enter to send, Shift+Enter for newline)"
-          disabled={isStreaming}
-        />
-        <button onClick={() => void send()} disabled={isStreaming || !input.trim()}>
-          {isStreaming ? "…" : "Send"}
-        </button>
-      </div>
-    </>
+                  {message.sources && message.sources.length > 0 && (
+                    <div className="sources">
+                      {message.sources.map((source) => (
+                        <div
+                          key={`${source.reference_id}-${source.chunk_id}`}
+                          className="source-item"
+                        >
+                          <span className="ref">[{source.reference_id}]</span>
+                          <span className="heading">
+                            {source.heading_path.join(" › ")}
+                            {source.page_start ? ` · tr.${source.page_start}` : ""}
+                          </span>
+                          <div className="snippet">{source.snippet}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                message.content
+              )}
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      ) : (
+        <div className="chat-empty">
+          <section className="hero">
+            <div className="hero-copy">
+              <h1>
+                Chào bạn, sẵn sàng
+                <br />
+                tra cứu tài liệu?
+              </h1>
+              <p>
+                Đặt câu hỏi bằng tiếng Việt. Câu trả lời luôn kèm trích dẫn tới
+                đúng điều khoản, trang và đoạn gốc.
+              </p>
+            </div>
+            <Robot />
+          </section>
+
+          <div className="suggestion-grid">
+            {SUGGESTIONS.map(({ title, body, action, tone, icon: Icon, href }) => {
+              const content = (
+                <>
+                  <span className={`suggestion-icon ${tone}`}>
+                    <Icon size={22} />
+                  </span>
+                  <span className="suggestion-title">{title}</span>
+                  <span className="suggestion-body">{body}</span>
+                  <span className="suggestion-action">{action}</span>
+                </>
+              );
+              return href ? (
+                <Link key={title} href={href} className="suggestion-card">
+                  {content}
+                </Link>
+              ) : (
+                <button
+                  key={title}
+                  type="button"
+                  className="suggestion-card"
+                  onClick={() => inputRef.current?.focus()}
+                >
+                  {content}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {composer}
+    </div>
   );
 }
