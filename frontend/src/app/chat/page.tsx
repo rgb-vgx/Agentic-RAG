@@ -3,6 +3,8 @@
 /** Chat page — sends queries, consumes the SSE stream, renders sources. */
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 import { streamChat } from "@/lib/stream";
 import { useChatStore } from "@/store/chat";
@@ -18,6 +20,11 @@ const STATUS_LABELS: Record<string, string> = {
   synthesize: "Writing the answer…",
   validate_citations: "Validating citations…",
 };
+
+/** Turn [R1] markers into link syntax so they can render as badges. */
+function citationify(text: string): string {
+  return text.replace(/\[(R\d+)\]/g, "[$1](#ref-$1)");
+}
 
 export default function ChatPage() {
   const {
@@ -186,12 +193,31 @@ export default function ChatPage() {
 
         {messages.map((message) => (
           <div key={message.id} className={`message ${message.role}`}>
-            {message.content ||
-              (message.streaming && isStreaming ? (
+            {message.role === "assistant" ? (
+              message.content ? (
+                <div className="markdown">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      a: ({ href, children }) =>
+                        href?.startsWith("#ref-") ? (
+                          <span className="citation-ref">[{children}]</span>
+                        ) : (
+                          <a href={href} target="_blank" rel="noreferrer">
+                            {children}
+                          </a>
+                        ),
+                    }}
+                  >
+                    {citationify(message.content)}
+                  </ReactMarkdown>
+                </div>
+              ) : message.streaming && isStreaming ? (
                 <span className="status-line">Thinking…</span>
-              ) : (
-                ""
-              ))}
+              ) : null
+            ) : (
+              message.content
+            )}
 
             {message.sources && message.sources.length > 0 && (
               <div className="sources">

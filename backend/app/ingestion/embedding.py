@@ -5,6 +5,8 @@ batching, retry and token accounting. Embeddings are deterministic per
 (model, dimension) — recorded in the indexing run's version snapshot.
 """
 
+import asyncio
+
 from app.domain.documents.entities import Document
 from app.ingestion.chunking.types import Chunk
 
@@ -12,9 +14,23 @@ from app.ingestion.chunking.types import Chunk
 class EmbeddingPipeline:
     """Turns chunks into vectors via the configured embedding provider."""
 
-    def __init__(self, provider, batch_size: int = 64):
+    def __init__(self, provider, batch_size: int = 16, max_attempts: int = 3):
         self.provider = provider
         self.batch_size = batch_size
+        self.max_attempts = max_attempts
+
+    async def _embed_batch(self, batch: list[str]) -> list[list[float]]:
+        """Retry transient provider failures (timeouts, 5xx) with backoff."""
+        last_error: Exception | None = None
+        for attempt in range(self.max_attempts):
+            try:
+                return await self.provider.embed_documents(batch)
+            except Exception as exc:  # provider/SDK errors are transient here
+                last_error = exc
+                if attempt == self.max_attempts - 1:
+                    raise
+                await asyncio.sleep(2**attempt)
+        raise last_error  # pragma: no cover
 
     async def embed_chunks(
         self, chunks: list[Chunk], document: Document
@@ -29,7 +45,7 @@ class EmbeddingPipeline:
 
         for start in range(0, len(texts), self.batch_size):
             batch = texts[start : start + self.batch_size]
-            vectors.extend(await self.provider.embed_documents(batch))
+            vectors.extend(await self._embed_batch(batch))
 
         return [
             {
@@ -37,7 +53,7 @@ class EmbeddingPipeline:
                 "vector": vector,
                 "payload": self._payload(chunk, document),
             }
-            for chunk, vector in zip(chunks, vectors)
+            for chunk, vector in zip(chunks, vectors, strict=True)
         ]
 
     async def embed_query(self, text: str) -> list[float]:

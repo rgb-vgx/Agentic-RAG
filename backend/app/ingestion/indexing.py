@@ -38,11 +38,13 @@ class QdrantIndexer:
         collection: str,
         dense_dim: int,
         enable_sparse: bool = True,
+        upsert_batch_size: int = 128,
     ):
         self.client = client
         self.collection = collection
         self.dense_dim = dense_dim
         self.enable_sparse = enable_sparse
+        self.upsert_batch_size = upsert_batch_size
 
     # ------------------------------------------------------------------
     # Collection management
@@ -129,9 +131,16 @@ class QdrantIndexer:
                 )
             )
 
-        if points:
-            self.client.upsert(collection_name=self.collection, points=points)
-        return len(points)
+        # Batch the upsert: 845 points × 4096 dims in one request is a
+        # multi-megabyte payload that exceeds the Qdrant HTTP timeout.
+        written = 0
+        for start in range(0, len(points), self.upsert_batch_size):
+            batch = points[start : start + self.upsert_batch_size]
+            self.client.upsert(
+                collection_name=self.collection, points=batch, wait=True
+            )
+            written += len(batch)
+        return written
 
     def deactivate_chunk_set(self, chunk_set_id: str, tenant_id: str) -> None:
         """Mark an old chunk set inactive instead of deleting it.

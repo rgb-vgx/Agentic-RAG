@@ -12,7 +12,11 @@ from app.ingestion.indexing import QdrantIndexer
 @lru_cache(maxsize=1)
 def get_qdrant_client() -> QdrantClient:
     """Sync client — indexing/worker paths only."""
-    kwargs: dict = {"url": settings.qdrant_url, "prefer_grpc": False}
+    kwargs: dict = {
+        "url": settings.qdrant_url,
+        "prefer_grpc": False,
+        "timeout": settings.qdrant_timeout_seconds,
+    }
     if settings.qdrant_api_key:
         kwargs["api_key"] = settings.qdrant_api_key
     return QdrantClient(**kwargs)
@@ -23,7 +27,11 @@ def get_async_qdrant_client():
     """Async client — FastAPI/LangGraph query path (never blocks the loop)."""
     from qdrant_client import AsyncQdrantClient
 
-    kwargs: dict = {"url": settings.qdrant_url, "prefer_grpc": False}
+    kwargs: dict = {
+        "url": settings.qdrant_url,
+        "prefer_grpc": False,
+        "timeout": settings.qdrant_timeout_seconds,
+    }
     if settings.qdrant_api_key:
         kwargs["api_key"] = settings.qdrant_api_key
     return AsyncQdrantClient(**kwargs)

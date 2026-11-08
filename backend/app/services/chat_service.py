@@ -17,11 +17,13 @@ from typing import Any
 
 from app.agentic_rag.graph.nodes import NodeContext
 from app.agentic_rag.graph.workflow import build_graph, initial_state, stream_run
+from app.agentic_rag.retrieval.tools import RerankTool
 from app.config import settings
 from app.domain.agents.state import WorkflowLimits
 from app.infrastructure.embeddings import get_embedding_provider
 from app.infrastructure.indexing_factory import build_retriever
 from app.infrastructure.llm import get_llm_client
+from app.infrastructure.rerankers import build_reranker
 
 
 @dataclass
@@ -70,7 +72,13 @@ def build_node_context(provider: str, model: str) -> NodeContext:
         limits=WorkflowLimits(
             max_retrieval_iterations=settings.agent_max_retrieval_iterations,
             max_decomposition_tasks=settings.agent_max_decomposition_tasks,
+            max_evidence_per_group=settings.synthesis_max_evidence_per_group,
+            retrieval_candidates=(
+                settings.rerank_candidates if settings.rerank_enabled else 20
+            ),
+            rerank_top_n=settings.rerank_top_n,
         ),
+        rerank_tool=RerankTool(build_reranker()),
     )
 
 

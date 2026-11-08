@@ -5,7 +5,7 @@ from app.config.settings import Settings
 
 def test_conf_json_provides_defaults():
     settings = Settings()
-    assert settings.qdrant_collection == "chunks_ollama"
+    assert settings.qdrant_collection == "chunks_qwen3_8b"
     assert settings.agent_max_retrieval_iterations == 3
     assert settings.cors_origins == ["http://localhost:3000"]
 

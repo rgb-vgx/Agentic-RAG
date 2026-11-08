@@ -119,7 +119,19 @@ class RerankTool:
     ) -> list[RetrievedEvidence]:
         if self.reranker is None or not evidence:
             return evidence[:top_k]
-        scored = await self.reranker.rerank(query, [e.content for e in evidence])
+        try:
+            scored = await self.reranker.rerank(
+                query, [e.content for e in evidence]
+            )
+        except Exception as exc:  # reranker down → keep retrieval order
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "reranker failed, falling back to retrieval order: %s", exc
+            )
+            return evidence[:top_k]
+        if len(scored) != len(evidence):
+            return evidence[:top_k]
         reranked = []
         for index in sorted(range(len(evidence)), key=lambda i: scored[i], reverse=True):
             item = evidence[index]

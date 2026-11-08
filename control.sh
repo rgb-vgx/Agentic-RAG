@@ -49,18 +49,19 @@ seed_dev() {
 
 # Rewrite the RAG_EMBEDDING_* / RAG_QDRANT_COLLECTION lines in .env
 set_embedding_cfg() {
-  local model="$1" base_url="$2" collection="$3"
+  local model="$1" base_url="$2" collection="$3" dim="$4" instruction="$5"
   touch .env
-  python3 - "$model" "$base_url" "$collection" <<'PY'
+  python3 - "$model" "$base_url" "$collection" "$dim" "$instruction" <<'PY'
 import sys
 from pathlib import Path
 
-model, base_url, collection = sys.argv[1:4]
+model, base_url, collection, dim, instruction = sys.argv[1:6]
 values = {
     "RAG_EMBEDDING_PROVIDER": "openai",
     "RAG_EMBEDDING_MODEL": model,
-    "RAG_EMBEDDING_DIM": "1024",
+    "RAG_EMBEDDING_DIM": dim,
     "RAG_EMBEDDING_BASE_URL": base_url,
+    "RAG_EMBEDDING_QUERY_INSTRUCTION": instruction,
     "RAG_QDRANT_COLLECTION": collection,
 }
 path = Path(".env")
@@ -93,8 +94,10 @@ Usage: ./control.sh <command>
   seed            Seed the dev tenant/user/membership (AUTH_DISABLED principal)
   bucket          Create the S3/MinIO bucket if it does not exist
   embeddings BACKEND
-                  Switch embedding backend: ollama (bge-m3, default) or
-                  tei (bge-m3-vi-base, GPU). Each has its own Qdrant collection.
+                  Switch embedding backend: qwen3 (qwen3-embedding:8b +
+                  query instruction, default, accuracy-first), ollama
+                  (bge-m3, fastest) or tei (bge-m3-vi-base, GPU).
+                  Each has its own Qdrant collection.
 
 Endpoints after start:
   API       http://localhost:8000/docs
@@ -144,20 +147,33 @@ case "$CMD" in
     ;;
   embeddings)
     case "${1:-}" in
-      tei)
+      qwen3)
         set_embedding_cfg \
-          "Adc05102002/bge-m3-vi-base" "http://tei:80/v1" "chunks_vi"
+          "qwen3-embedding:8b" "http://host.docker.internal:11434/v1" \
+          "chunks_qwen3_8b" "4096" \
+          "Given a Vietnamese question, retrieve passages that answer the question"
+        dc stop tei >/dev/null 2>&1 || true
+        dc up -d api worker
         ;;
       ollama)
         set_embedding_cfg \
-          "bge-m3" "http://host.docker.internal:11434/v1" "chunks_ollama"
+          "bge-m3" "http://host.docker.internal:11434/v1" "chunks_ollama" \
+          "1024" ""
+        # TEI is not needed for Ollama embeddings — stop it to free VRAM.
+        dc stop tei >/dev/null 2>&1 || true
+        dc up -d api worker
+        ;;
+      tei)
+        set_embedding_cfg \
+          "Adc05102002/bge-m3-vi-base" "http://tei:80/v1" "chunks_vi" \
+          "1024" ""
+        dc up -d tei api worker
         ;;
       *)
-        echo "Usage: ./control.sh embeddings <tei|ollama>" >&2
+        echo "Usage: ./control.sh embeddings <qwen3|ollama|tei>" >&2
         exit 1
         ;;
     esac
-    dc up -d api worker
     echo
     echo "Embedding backend switched. Documents must be (re)ingested into"
     echo "the new collection before they can be retrieved."

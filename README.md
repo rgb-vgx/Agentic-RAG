@@ -8,7 +8,7 @@ Agentic-RAG/
 ├── Proposal Design.md              # Technical design v1.1 (EN)
 ├── Proposal Design (Tiếng Việt).md # Bản tiếng Việt, line-aligned
 ├── README.vi.md                    # Vietnamese translation
-├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + TEI + API + worker + frontend
+├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + API + worker + frontend (+ optional TEI)
 ├── backend/                        # Python 3.12 + FastAPI
 │   ├── app/
 │   │   ├── api/v1/                 # REST + SSE endpoints (auth, documents, conversations, chat)
@@ -91,7 +91,7 @@ conversations, vectors, or the embedding-model cache.
 | `./control.sh logs [service]` | Follows logs, optionally for one service. |
 | `./control.sh seed` | Idempotently inserts the dev tenant, user and membership used by `AUTH_DISABLED`. |
 | `./control.sh bucket` | Creates the `agentic-rag` bucket in MinIO if missing. |
-| `./control.sh embeddings tei\|ollama` | Switches the embedding backend and recreates `api` + `worker` (see below). |
+| `./control.sh embeddings qwen3\|ollama\|tei` | Switches the embedding backend and recreates `api` + `worker`; `qwen3`/`ollama` stop the TEI service to free VRAM, `tei` starts it. |
 
 ### Ports
 
@@ -101,7 +101,7 @@ conversations, vectors, or the embedding-model cache.
 | API / Swagger | http://localhost:8000/docs |
 | Qdrant dashboard | http://localhost:6333/dashboard |
 | MinIO API / console | localhost:9000 / http://localhost:9002 |
-| TEI (embeddings) | http://localhost:8080 |
+| TEI (embeddings, optional) | http://localhost:8080 |
 | Postgres | localhost:5436 (`agentic` / `agentic`, db `agentic_rag`) |
 | Redis | localhost:6379 |
 | Ollama (on the host) | http://localhost:11434 |
@@ -115,58 +115,71 @@ the mapping back in `docker-compose.yml`.
 | Volume | Contents |
 |---|---|
 | `agentic-rag_pgdata` | Postgres: users, documents, conversations, runs |
-| `agentic-rag_qdrant_data` | Vector collections (`chunks_vi`, `chunks_ollama`) |
+| `agentic-rag_qdrant_data` | Vector collections (`chunks_qwen3_8b`, `chunks_ollama`, `chunks_vi`) |
 | `agentic-rag_minio_data` | Original uploaded files |
-| `agentic-rag_tei_data` | Hugging Face cache for the TEI embedding model |
+| `agentic-rag_tei_data` | Hugging Face cache for TEI (only when the TEI profile is enabled) |
 
 `stop` only stops containers. Do not run `docker compose down -v` unless you
 intend to delete all data. `start` reuses the same volumes, so re-running it
 is safe.
 
-### Embedding backend: Ollama (default) vs TEI
+### Embedding backend: qwen3-embedding:8b (default) vs bge-m3 vs TEI
 
-Two encoders are available. Each writes to its own Qdrant collection because
-vectors from different models are not comparable. On the 850-chunk corpus,
-official `bge-m3` scored 17/20 top-1 (MRR 0.906) while the
-`bge-m3-vi-base` fine-tune scored 0/20 — hence Ollama is the default.
+Accuracy-first default: `qwen3-embedding:8b` (4096 dims) with a query-only
+instruction. Each encoder writes to its own collection because vectors from
+different models are not comparable.
 
-| Backend | Model | Endpoint | Collection |
-|---|---|---|---|
-| `ollama` (default) | `bge-m3`, 1024 dims | `http://host.docker.internal:11434/v1` | `chunks_ollama` |
-| `tei` | `Adc05102002/bge-m3-vi-base`, 1024 dims | `http://tei:80/v1` | `chunks_vi` |
+On the 850-chunk legal corpus (20 queries, dense-only):
+
+| Encoder | Top-1 | Top-5 | MRR | Embed speed | VRAM | Dims |
+|---|---|---|---|---|---|---|
+| **qwen3-embedding:8b + instruction** (default) | **18/20** | **20/20** | **0.950** | 130 ms/chunk | 5.7 GB | 4096 |
+| qwen3-embedding:8b no instruction | 17/20 | 20/20 | 0.917 | 130 ms/chunk | 5.7 GB | 4096 |
+| bge-m3 (fastest) | 17/20 | 19/20 | 0.906 | 17 ms/chunk | 0.7 GB | 1024 |
+| qwen3-embedding:4b | 16/20 | 20/20 | 0.900 | 77 ms/chunk | 3.4 GB | 2560 |
+| bge-m3-vi-base (TEI) | 0/20 | 0/20 | 0.006 | 7 ms/chunk | 1.4 GB | 1024 |
 
 ```bash
-./control.sh embeddings ollama   # default: Ollama bge-m3
+./control.sh embeddings qwen3    # default: qwen3-embedding:8b + instruction
+./control.sh embeddings ollama   # bge-m3 (fastest, lowest VRAM)
 ./control.sh embeddings tei      # GPU TEI with the vi fine-tune
 ```
 
 The command rewrites `RAG_EMBEDDING_*` / `RAG_QDRANT_COLLECTION` in the
 git-ignored root `.env` and recreates `api` + `worker`. Switching does **not**
 migrate vectors: documents must be re-ingested (upload again) to be
-retrievable under the new backend. The TEI service keeps running in both
-modes (~1.4 GB VRAM); `docker compose stop tei` frees it.
+retrievable under the new backend. The `qwen3` and `ollama` modes stop TEI
+to free ~1.4 GB VRAM; `tei` starts the profiled service again.
 
-Measured on an RTX 3060: TEI GPU ≈ 1.7 ms/text, Ollama ≈ 6.7 ms/text (warm,
-batch 64). Both can run alongside the `qwen3.5:9b` chat model — about
-7.7 GB / 12 GB VRAM total.
+Ingestion is batched for large models: `EMBEDDING_BATCH_SIZE=16` (requests to
+Ollama), `EMBEDDING_TIMEOUT_SECONDS=900`, and Qdrant upserts are split into
+128-point batches so a 4096-dim document does not exceed the HTTP timeout.
+
+With only `qwen3-embedding:8b` resident, the stack uses ~6.3 GB / 12 GB VRAM;
+chat runs on the remote DeepSeek proxy.
 
 ### First-run checklist
 
-1. Pull the Ollama models used by the stack:
+1. Pull the Ollama embedding model (chat runs on the remote proxy):
    ```bash
-   ollama pull qwen3.5:9b
-   ollama pull bge-m3
+   ollama pull qwen3-embedding:8b
+   # optional fast alternative:
+   # ollama pull bge-m3
    ```
 2. Root `.env` (git-ignored) for local development:
    ```
    AUTH_DISABLED=true
    RAG_EMBEDDING_PROVIDER=openai
-   RAG_EMBEDDING_MODEL=bge-m3
-   RAG_EMBEDDING_DIM=1024
+   RAG_EMBEDDING_MODEL=qwen3-embedding:8b
+   RAG_EMBEDDING_DIM=4096
    RAG_EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1
-   RAG_QDRANT_COLLECTION=chunks_ollama
+   RAG_EMBEDDING_QUERY_INSTRUCTION=Given a Vietnamese question, retrieve passages that answer the question
+   RAG_EMBEDDING_BATCH_SIZE=16
+   RAG_EMBEDDING_TIMEOUT_SECONDS=900
+   RAG_QDRANT_COLLECTION=chunks_qwen3_8b
    ```
-   Optional Anthropic-compatible proxy (enables `deepseek-v4.1-flash`):
+   Anthropic-compatible proxy — required for the default chat model
+   (`deepseek-v4.1-flash`). Requests leave the local machine:
    ```
    RAG_ANTHROPIC_BASE_URL=https://opencode.ai/inference/go/anthropic
    RAG_ANTHROPIC_AUTH_TOKEN=<token>
@@ -184,9 +197,12 @@ batch 64). Both can run alongside the `qwen3.5:9b` chat model — about
 - **Upload returns 502 with an FK violation** — the dev principal is not
   seeded. Run `./control.sh seed` (requires `AUTH_DISABLED=true` and
   `APP_ENV=development`).
-- **Chat returns 503 "OpenAI is not configured"** — Ollama is not reachable
-  from the container. Check `extra_hosts: host.docker.internal:host-gateway`
-  and `OPENAI_BASE_URL=http://host.docker.internal:11434/v1`.
+- **Chat returns 503 "Anthropic is not configured"** — the proxy credentials
+  are missing: set `RAG_ANTHROPIC_BASE_URL` / `RAG_ANTHROPIC_AUTH_TOKEN` and
+  recreate the API container.
+- **Chat returns 503 "OpenAI is not configured"** — embeddings cannot reach
+  Ollama from the container. Check `extra_hosts:
+  host.docker.internal:host-gateway` and the embedding base URL.
 - **Ingestion fails with `batch size 64 > maximum allowed batch size 32`** —
   TEI must start with `--max-client-batch-size 64` (already set in
   `docker-compose.yml`).
@@ -225,11 +241,20 @@ batch 64). Both can run alongside the `qwen3.5:9b` chat model — about
   overrides the shared `OPENAI_BASE_URL`, so chat can go to Ollama while
   embeddings go to the TEI service (`http://tei:80/v1` in compose,
   `http://localhost:8080/v1` outside Docker).
-- The local stack serves `bge-m3` (1024 dims) through Ollama by default;
-  `Adc05102002/bge-m3-vi-base` through `text-embeddings-inference` remains
-  available as the alternative. Chat goes through Ollama (`qwen3.5:9b`).
-  Thinking models need `openai_reasoning_effort: "none"` (conf.json) or
-  they spend the whole token budget on reasoning and return empty content.
+- The local stack serves `qwen3-embedding:8b` (4096 dims, query-only
+  instruction) through Ollama by default. `bge-m3` (1024 dims, fastest) and
+  `Adc05102002/bge-m3-vi-base` through `text-embeddings-inference` remain
+  available as alternatives. Chat runs on `deepseek-v4.1-flash` through the
+  Anthropic-compatible proxy.
+- **Data leaves the machine**: chat requests and the retrieved evidence are
+  sent to `opencode.ai`. Keep this in mind for internal documents.
+- The local `qwen3.5:9b` chat model is disabled. It was benchmarked and
+  dropped: Ollama allocates only a 4096-token context by default, the
+  `num_ctx` field is ignored by its OpenAI-compatible endpoint, and an
+  over-long prompt is truncated **from the start** — dropping the system
+  instruction and the best-ranked evidence. Raising the context works but
+  offloads to CPU at 128k+ on a 12 GB GPU. Synthesis still caps
+  evidence at `synthesis_max_evidence_per_group` (8) chunks per task.
 - Chat validates citations before emitting token frames, so the client
   never receives ungrounded text.
 
@@ -268,8 +293,9 @@ API/worker use `qdrant:6333` internally. Retrieval needs it; if Qdrant is
 up but the collection is empty, chat returns the insufficiency message
 rather than crashing. The collection is created by the first ingestion
 job, with its dense dimension taken from `embedding_dim` — changing the
-embedding model requires a new collection (this stack uses `chunks_ollama`
-at 1024 dims by default; `chunks_vi` holds the TEI alternative).
+embedding model requires a new collection (this stack uses
+`chunks_qwen3_8b` at 4096 dims by default; `chunks_ollama` holds bge-m3 and
+`chunks_vi` the TEI alternative).
 
 ### Supported upload formats
 
@@ -459,8 +485,9 @@ paths are wired to Postgres.
   `DELETE` enqueues the vector/file cleanup job
 - ✅ Dense + sparse vectors written at index time; retrieval filtered by
   the caller's visibility snapshot
-- ✅ Local models wired: Ollama `qwen3.5:9b` for chat, Ollama `bge-m3`
-  (1024 dims) for embeddings (TEI `bge-m3-vi-base` available as alternative)
+- ✅ Models wired: `deepseek-v4.1-flash` (remote proxy) for chat, Ollama
+  `qwen3-embedding:8b` (4096 dims, instruction) for embeddings; bge-m3 is
+  the fast alternative, local qwen chat and TEI are disabled by default
 - ⏳ Frontend Google OAuth wiring (AUTH_DISABLED works for local dev;
   invite-only Google login has no UI yet)
 - ⏳ P1 hardening: ingestion state machine, injection defenses

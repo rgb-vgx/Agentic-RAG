@@ -140,7 +140,7 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
                     query=task.query,
                     tenant_id=state["tenant_id"],
                     query_vector=query_vector,
-                    limit=20,
+                    limit=ctx.limits.retrieval_candidates,
                     document_ids=snapshot,
                 )
                 # Re-embed sub-query for tasks that differ from the main query
@@ -150,13 +150,15 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
                         query=task.query,
                         tenant_id=state["tenant_id"],
                         query_vector=sub_vector,
-                        limit=20,
+                        limit=ctx.limits.retrieval_candidates,
                         document_ids=snapshot,
                     )
 
-            if plan.requires_reranking and evidence:
+            # Rerank whenever a reranker is configured; do not rely on the
+            # planner's `requires_reranking` flag alone.
+            if ctx.rerank_tool.reranker is not None and evidence:
                 evidence = await ctx.rerank_tool.run(
-                    task.query, evidence, top_k=8
+                    task.query, evidence, top_k=ctx.limits.rerank_top_n
                 )
 
             if plan.requires_context_expansion and evidence:
@@ -249,6 +251,15 @@ async def synthesize_node(state: AgentState, ctx: NodeContext) -> dict:
     """Generate the grounded answer (Section 7.4)."""
     async with trace_node("synthesize", run_id=state.get("run_id")) as span:
         groups = [EvidenceGroup(**g) for g in state.get("evidence_groups", [])]
+        # Keep the prompt inside the local model's context window: Ollama
+        # truncates from the start, which drops the system prompt and the
+        # best-ranked evidence before the model ever sees them.
+        limit = ctx.limits.max_evidence_per_group
+        if limit > 0:
+            groups = [
+                group.model_copy(update={"evidence": group.evidence[:limit]})
+                for group in groups
+            ]
         resolved = state["resolved_query"]
         query = resolved.get("standalone_query", state.get("user_query", ""))
 

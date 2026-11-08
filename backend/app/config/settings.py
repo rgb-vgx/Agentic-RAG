@@ -82,6 +82,8 @@ class Settings(BaseSettings):
     # BM25 channel hurting dense-only retrieval on Vietnamese legal text
     # (7/20 vs 18/20 top-1), so it is off by default.
     retrieval_enable_sparse: bool = False
+    # Qdrant HTTP timeout; large 4096-dim batches need more than the default.
+    qdrant_timeout_seconds: int = 120
 
     # Object storage
     s3_endpoint_url: str | None = None
@@ -125,11 +127,25 @@ class Settings(BaseSettings):
     # openai_base_url when unset, so one Ollama/LiteLLM URL can serve both.
     embedding_base_url: str | None = None
     embedding_api_key: str = ""
+    # Instruction prepended to QUERIES only (not documents). Qwen3-Embedding
+    # gains ~.03 MRR with it on the Vietnamese legal benchmark; bge-m3 does
+    # not need one, so this is empty by default.
+    embedding_query_instruction: str = ""
+    # Large embedding models (qwen3-embedding:8b) are much slower per request;
+    # keep batches small and allow long-running batches before the SDK times out.
+    embedding_batch_size: int = 16
+    embedding_timeout_seconds: float = 900.0
 
     # Reranking
-    rerank_provider: str = "cohere"
-    rerank_model: str = "rerank-multilingual-v3.0"
+    rerank_provider: str = "llamacpp"
+    rerank_model: str = "Qwen3-Reranker-4B"
     rerank_api_key: str = ""
+    rerank_enabled: bool = False
+    rerank_url: str | None = None
+    rerank_path: str = "/rerank"
+    rerank_timeout_seconds: float = 120.0
+    rerank_candidates: int = 50
+    rerank_top_n: int = 10
 
     # Auth
     google_client_id: str = ""
@@ -154,6 +170,11 @@ class Settings(BaseSettings):
     # Agent limits
     agent_max_retrieval_iterations: int = 3
     agent_max_decomposition_tasks: int = 5
+    # Evidence chunks passed to synthesis per retrieval task. Ollama runs
+    # qwen3.5:9b with a 4096-token context; 20 chunks overflow it and the
+    # prompt is truncated from the start (losing the system prompt and the
+    # best-ranked evidence), so cap the prompt instead.
+    synthesis_max_evidence_per_group: int = 8
 
     @field_validator("cors_origins", mode="before")
     @classmethod

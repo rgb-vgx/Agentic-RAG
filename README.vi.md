@@ -9,7 +9,7 @@ Agentic-RAG/
 ├── Proposal Design.md              # Thiết kế kỹ thuật v1.1 (EN)
 ├── Proposal Design (Tiếng Việt).md # Bản tiếng Việt, line-aligned
 ├── README.vi.md                    # Bản tiếng Việt của README (tệp này)
-├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + TEI + API + worker + frontend
+├── docker-compose.yml              # Postgres + Redis + Qdrant + MinIO + API + worker + frontend (+ TEI tuỳ chọn)
 ├── backend/                        # Python 3.12 + FastAPI
 │   ├── app/
 │   │   ├── api/v1/                 # Endpoint REST + SSE (auth, documents, conversations, chat)
@@ -90,7 +90,7 @@ xoá tài liệu, hội thoại, vector hay cache model embedding.
 | `./control.sh logs [service]` | Theo dõi log, có thể chỉ một service. |
 | `./control.sh seed` | Chèn idempotent tenant, user và membership dev dùng bởi `AUTH_DISABLED`. |
 | `./control.sh bucket` | Tạo bucket `agentic-rag` trên MinIO nếu chưa có. |
-| `./control.sh embeddings tei\|ollama` | Chuyển backend embedding và tạo lại `api` + `worker` (xem bên dưới). |
+| `./control.sh embeddings qwen3\|ollama\|tei` | Chuyển backend embedding và tạo lại `api` + `worker`; `qwen3`/`ollama` dừng TEI để giải phóng VRAM, `tei` bật service TEI. |
 
 ### Cổng
 
@@ -100,7 +100,7 @@ xoá tài liệu, hội thoại, vector hay cache model embedding.
 | API / Swagger | http://localhost:8000/docs |
 | Qdrant dashboard | http://localhost:6333/dashboard |
 | MinIO API / console | localhost:9000 / http://localhost:9002 |
-| TEI (embeddings) | http://localhost:8080 |
+| TEI (embeddings, tuỳ chọn) | http://localhost:8080 |
 | Postgres | localhost:5436 (`agentic` / `agentic`, db `agentic_rag`) |
 | Redis | localhost:6379 |
 | Ollama (trên host) | http://localhost:11434 |
@@ -114,58 +114,71 @@ Console MinIO nằm ở **9002** vì `127.0.0.1:9001` đang bị service khác d
 | Volume | Nội dung |
 |---|---|
 | `agentic-rag_pgdata` | Postgres: users, documents, conversations, runs |
-| `agentic-rag_qdrant_data` | Các collection vector (`chunks_vi`, `chunks_ollama`) |
+| `agentic-rag_qdrant_data` | Các collection vector (`chunks_qwen3_8b`, `chunks_ollama`, `chunks_vi`) |
 | `agentic-rag_minio_data` | File gốc đã upload |
-| `agentic-rag_tei_data` | Cache Hugging Face cho model embedding của TEI |
+| `agentic-rag_tei_data` | Cache Hugging Face cho TEI (chỉ khi bật profile TEI) |
 
 `stop` chỉ dừng container. Không chạy `docker compose down -v` trừ khi bạn
 thực sự muốn xoá toàn bộ dữ liệu. `start` dùng lại đúng các volume đó, nên
 chạy lại nhiều lần vẫn an toàn.
 
-### Backend embedding: Ollama (mặc định) và TEI
+### Backend embedding: qwen3-embedding:8b (mặc định), bge-m3 và TEI
 
-Có hai encoder. Mỗi encoder ghi vào collection Qdrant riêng vì vector từ các
-model khác nhau không so sánh được với nhau. Trên corpus 850 chunk, `bge-m3`
-chính thức đạt 17/20 top-1 (MRR 0.906) còn bản fine-tune `bge-m3-vi-base`
-chỉ 0/20 — vì vậy Ollama là mặc định.
+Mặc định ưu tiên độ chính xác: `qwen3-embedding:8b` (4096 chiều) với
+instruction chỉ gắn cho query. Mỗi encoder ghi vào collection Qdrant riêng vì
+vector từ các model khác nhau không so sánh được với nhau.
 
-| Backend | Model | Endpoint | Collection |
-|---|---|---|---|
-| `ollama` (mặc định) | `bge-m3`, 1024 chiều | `http://host.docker.internal:11434/v1` | `chunks_ollama` |
-| `tei` | `Adc05102002/bge-m3-vi-base`, 1024 chiều | `http://tei:80/v1` | `chunks_vi` |
+Trên corpus 850 chunk (20 câu, dense-only):
+
+| Encoder | Top-1 | Top-5 | MRR | Tốc độ embed | VRAM | Dims |
+|---|---|---|---|---|---|---|
+| **qwen3-embedding:8b + instruction** (mặc định) | **18/20** | **20/20** | **0.950** | 130 ms/chunk | 5,7 GB | 4096 |
+| qwen3-embedding:8b không instruction | 17/20 | 20/20 | 0.917 | 130 ms/chunk | 5,7 GB | 4096 |
+| bge-m3 (nhanh nhất) | 17/20 | 19/20 | 0.906 | 17 ms/chunk | 0,7 GB | 1024 |
+| qwen3-embedding:4b | 16/20 | 20/20 | 0.900 | 77 ms/chunk | 3,4 GB | 2560 |
+| bge-m3-vi-base (TEI) | 0/20 | 0/20 | 0.006 | 7 ms/chunk | 1,4 GB | 1024 |
 
 ```bash
-./control.sh embeddings ollama   # mặc định: bge-m3 qua Ollama
+./control.sh embeddings qwen3    # mặc định: qwen3-embedding:8b + instruction
+./control.sh embeddings ollama   # bge-m3 (nhanh nhất, ít VRAM)
 ./control.sh embeddings tei      # TEI GPU với bản fine-tune tiếng Việt
 ```
 
 Lệnh này ghi lại `RAG_EMBEDDING_*` / `RAG_QDRANT_COLLECTION` trong `.env` ở
 thư mục gốc (đã git-ignore) rồi tạo lại `api` + `worker`. Chuyển backend
 **không** migrate vector: tài liệu phải được ingest lại (upload lại) mới
-retrieve được theo backend mới. Service TEI vẫn chạy ở cả hai chế độ
-(~1,4 GB VRAM); `docker compose stop tei` sẽ giải phóng.
+retrieve được theo backend mới. `qwen3`/`ollama` dừng TEI để giải phóng
+~1,4 GB VRAM; `tei` bật lại service TEI (profile).
 
-Đo trên RTX 3060: TEI GPU ≈ 1,7 ms/text, Ollama ≈ 6,7 ms/text (đã warm,
-batch 64). Cả hai chạy song song được với model chat `qwen3.5:9b` — tổng
-khoảng 7,7 GB / 12 GB VRAM.
+Ingestion được batch cho model lớn: `EMBEDDING_BATCH_SIZE=16` (request tới
+Ollama), `EMBEDDING_TIMEOUT_SECONDS=900`, và upsert Qdrant chia batch 128
+point để tài liệu 4096 chiều không vượt HTTP timeout.
+
+Khi chỉ giữ `qwen3-embedding:8b`, stack dùng ~6,3 GB / 12 GB VRAM; chat chạy
+trên proxy DeepSeek từ xa.
 
 ### Checklist lần chạy đầu
 
-1. Pull các model Ollama mà stack dùng:
+1. Pull model embedding Ollama (chat chạy trên proxy từ xa):
    ```bash
-   ollama pull qwen3.5:9b
-   ollama pull bge-m3
+   ollama pull qwen3-embedding:8b
+   # lựa chọn nhanh:
+   # ollama pull bge-m3
    ```
 2. File `.env` ở thư mục gốc (đã git-ignore) cho phát triển local:
    ```
    AUTH_DISABLED=true
    RAG_EMBEDDING_PROVIDER=openai
-   RAG_EMBEDDING_MODEL=bge-m3
-   RAG_EMBEDDING_DIM=1024
+   RAG_EMBEDDING_MODEL=qwen3-embedding:8b
+   RAG_EMBEDDING_DIM=4096
    RAG_EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1
-   RAG_QDRANT_COLLECTION=chunks_ollama
+   RAG_EMBEDDING_QUERY_INSTRUCTION=Given a Vietnamese question, retrieve passages that answer the question
+   RAG_EMBEDDING_BATCH_SIZE=16
+   RAG_EMBEDDING_TIMEOUT_SECONDS=900
+   RAG_QDRANT_COLLECTION=chunks_qwen3_8b
    ```
-   Tuỳ chọn: proxy tương thích Anthropic (bật model `deepseek-v4.1-flash`):
+   Proxy tương thích Anthropic — bắt buộc cho model chat mặc định
+  (`deepseek-v4.1-flash`). Request rời khỏi máy:
    ```
    RAG_ANTHROPIC_BASE_URL=https://opencode.ai/inference/go/anthropic
    RAG_ANTHROPIC_AUTH_TOKEN=<token>
@@ -182,9 +195,12 @@ khoảng 7,7 GB / 12 GB VRAM.
 
 - **Upload trả 502 kèm lỗi FK** — principal dev chưa được seed. Chạy
   `./control.sh seed` (cần `AUTH_DISABLED=true` và `APP_ENV=development`).
-- **Chat trả 503 "OpenAI is not configured"** — container không kết nối được
-  Ollama. Kiểm tra `extra_hosts: host.docker.internal:host-gateway` và
-  `OPENAI_BASE_URL=http://host.docker.internal:11434/v1`.
+- **Chat trả 503 "Anthropic is not configured"** — thiếu credential proxy:
+  đặt `RAG_ANTHROPIC_BASE_URL` / `RAG_ANTHROPIC_AUTH_TOKEN` rồi recreate
+  container API.
+- **Chat trả 503 "OpenAI is not configured"** — embedding không kết nối được
+  Ollama từ container. Kiểm tra `extra_hosts:
+  host.docker.internal:host-gateway` và base URL embedding.
 - **Ingest lỗi `batch size 64 > maximum allowed batch size 32`** — TEI phải
   chạy với `--max-client-batch-size 64` (đã đặt trong `docker-compose.yml`).
 - **Chat trả "không đủ bằng chứng" sau khi đổi backend embedding** — vector
@@ -220,11 +236,19 @@ khoảng 7,7 GB / 12 GB VRAM.
   tất định cho phát triển). `EMBEDDING_BASE_URL` ghi đè `OPENAI_BASE_URL`
   dùng chung, nên chat có thể đi Ollama trong khi embedding đi TEI
   (`http://tei:80/v1` trong compose, `http://localhost:8080/v1` ngoài Docker).
-- Stack local phục vụ `bge-m3` (1024 chiều) qua Ollama theo mặc định;
+- Stack local phục vụ `qwen3-embedding:8b` (4096 chiều, instruction chỉ gắn
+  cho query) qua Ollama theo mặc định. `bge-m3` (1024 chiều, nhanh nhất) và
   `Adc05102002/bge-m3-vi-base` qua `text-embeddings-inference` vẫn là lựa
-  chọn thay thế. Chat đi qua Ollama (`qwen3.5:9b`). Model
-  "thinking" cần `openai_reasoning_effort: "none"` (conf.json), nếu không nó
-  sẽ dùng hết token budget cho reasoning và trả content rỗng.
+  chọn thay thế. Chat chạy `deepseek-v4.1-flash` qua proxy tương thích
+  Anthropic.
+- **Dữ liệu rời khỏi máy**: request chat và evidence retrieve được gửi tới
+  `opencode.ai`. Cân nhắc khi dùng tài liệu nội bộ.
+- Model chat local `qwen3.5:9b` đã tắt. Lý do: Ollama chỉ cấp context 4096
+  token mặc định, endpoint OpenAI-compatible bỏ qua `num_ctx`, và prompt quá
+  dài bị cắt **từ đầu** — mất system instruction và bằng chứng xếp hạng cao
+  nhất. Tăng context được nhưng từ 128k trở lên đã phải offload CPU trên GPU
+  12 GB. Synthesis vẫn giới hạn evidence ở
+  `synthesis_max_evidence_per_group` (8) chunk mỗi task.
 - Chat kiểm tra citation trước khi phát token, nên client không bao giờ nhận
   văn bản không có căn cứ.
 
@@ -262,8 +286,8 @@ Stack compose có Qdrant (`localhost:6333` / gRPC `6334`) và API/worker dùng
 `qdrant:6333` nội bộ. Retrieval cần nó; nếu Qdrant chạy nhưng collection
 rỗng, chat trả message thiếu bằng chứng chứ không crash. Collection được tạo
 bởi job ingest đầu tiên, với số chiều dense lấy từ `embedding_dim` — đổi model
-embedding cần collection mới (stack này dùng `chunks_ollama` với 1024 chiều
-theo mặc định; `chunks_vi` giữ lựa chọn TEI).
+embedding cần collection mới (stack này dùng `chunks_qwen3_8b` với 4096 chiều
+theo mặc định; `chunks_ollama` giữ bge-m3 và `chunks_vi` giữ lựa chọn TEI).
 
 ### Định dạng upload hỗ trợ
 
@@ -445,7 +469,7 @@ với Postgres.
 - ✅ Thay đổi từ review production vòng 1: giới hạn loop, publish-after-verify, citation grounding, upload gate, Qdrant async
 - ✅ Upload → object storage → RQ đã nối (`POST /documents`), `DELETE` enqueue job dọn vector/file
 - ✅ Vector dense + sparse được ghi lúc index; retrieval lọc theo snapshot visibility của caller
-- ✅ Model local đã nối: Ollama `qwen3.5:9b` cho chat, Ollama `bge-m3` (1024 chiều) cho embedding (TEI `bge-m3-vi-base` là lựa chọn thay thế)
+- ✅ Model đã nối: `deepseek-v4.1-flash` (proxy từ xa) cho chat, Ollama `qwen3-embedding:8b` (4096 chiều, instruction) cho embedding; bge-m3 là lựa chọn nhanh, qwen local và TEI tắt mặc định
 - ✅ Hỗ trợ upload PDF, DOCX, TXT/MD (legacy `.doc` bị từ chối)
 - ⏳ Nối Google OAuth cho frontend (AUTH_DISABLED đủ cho local; login Google invite-only chưa có UI)
 - ⏳ Hardening P1: ingestion state machine, phòng chống injection

@@ -34,19 +34,26 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
                 "An embedding API key or base URL is required "
                 "(EMBEDDING_API_KEY/EMBEDDING_BASE_URL or OPENAI_API_KEY/OPENAI_BASE_URL)"
             )
-        kwargs: dict = {"api_key": key or "not-needed"}
+        kwargs: dict = {
+            "api_key": key or "not-needed",
+            "timeout": settings.embedding_timeout_seconds,
+        }
         if base_url:
             kwargs["base_url"] = base_url
         self._client = AsyncOpenAI(**kwargs)
         self.model = model or settings.embedding_model
         self.dimension = settings.embedding_dim
+        instruction = settings.embedding_query_instruction
+        self._query_prefix = f"Instruct: {instruction}\nQuery: " if instruction else ""
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         response = await self._client.embeddings.create(model=self.model, input=texts)
         return [item.embedding for item in response.data]
 
     async def embed_query(self, text: str) -> list[float]:
-        response = await self._client.embeddings.create(model=self.model, input=[text])
+        response = await self._client.embeddings.create(
+            model=self.model, input=[self._query_prefix + text]
+        )
         return response.data[0].embedding
 
 

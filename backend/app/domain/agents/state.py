@@ -76,6 +76,10 @@ class WorkflowLimits(BaseModel):
     max_retrieval_iterations: int = 3
     max_decomposition_tasks: int = 5
     max_evidence_tokens: int = 8000
+    max_evidence_per_group: int = 8
+    # Candidates fetched before reranking, and how many survive it.
+    retrieval_candidates: int = 20
+    rerank_top_n: int = 8
     max_execution_ms: int = 60000
 
 

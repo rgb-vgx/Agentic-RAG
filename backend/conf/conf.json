@@ -10,20 +10,20 @@
   "ingestion_queue": "ingestion",
 
   "qdrant_url": "http://localhost:6333",
-  "qdrant_collection": "chunks_ollama",
+  "qdrant_collection": "chunks_qwen3_8b",
   "retrieval_enable_sparse": false,
+  "qdrant_timeout_seconds": 120,
 
   "s3_endpoint_url": "http://localhost:9000",
   "s3_bucket": "agentic-rag",
   "s3_region": "us-east-1",
 
-  "llm_provider": "openai",
+  "llm_provider": "anthropic",
   "openai_chat_model": "qwen3.5:9b",
   "openai_reasoning_effort": "none",
   "anthropic_chat_model": "claude-sonnet-4-20250514",
-  "llm_default_model": "qwen3.5:9b",
+  "llm_default_model": "deepseek-v4.1-flash",
   "llm_models": [
-    {"id": "qwen3.5:9b", "label": "Qwen3.5 9B (Ollama)", "provider": "openai"},
     {
       "id": "deepseek-v4.1-flash",
       "label": "DeepSeek v4.1 Flash (OpenCode)",
@@ -32,12 +32,20 @@
   ],
 
   "embedding_provider": "openai",
-  "embedding_model": "bge-m3",
-  "embedding_dim": 1024,
+  "embedding_model": "qwen3-embedding:8b",
+  "embedding_dim": 4096,
   "embedding_base_url": "http://localhost:11434/v1",
+  "embedding_query_instruction": "Given a Vietnamese question, retrieve passages that answer the question",
+  "embedding_batch_size": 16,
+  "embedding_timeout_seconds": 900,
 
-  "rerank_provider": "cohere",
-  "rerank_model": "rerank-multilingual-v3.0",
+  "rerank_provider": "llamacpp",
+  "rerank_model": "Qwen3-Reranker-4B",
+  "rerank_enabled": true,
+  "rerank_url": "http://localhost:8083",
+  "rerank_path": "/rerank",
+  "rerank_candidates": 50,
+  "rerank_top_n": 10,
 
   "jwt_issuer": "rag-api",
   "jwt_audience": "rag-web",
@@ -49,5 +57,6 @@
   "langfuse_host": "http://localhost:3001",
 
   "agent_max_retrieval_iterations": 3,
-  "agent_max_decomposition_tasks": 5
+  "agent_max_decomposition_tasks": 5,
+  "synthesis_max_evidence_per_group": 8
 }

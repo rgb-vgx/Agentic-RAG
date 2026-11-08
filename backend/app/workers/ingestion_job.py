@@ -26,6 +26,7 @@ def process_document(document_id: str, tenant_id: str, storage_path: str) -> dic
 
 
 async def _process_async(document_id: str, tenant_id: str, storage_path: str) -> dict:
+    from app.config import settings
     from app.domain.documents.entities import Document, DocumentStatus
     from app.infrastructure.database.models import DocumentRecord
     from app.infrastructure.database.session import get_session_factory
@@ -66,7 +67,10 @@ async def _process_async(document_id: str, tenant_id: str, storage_path: str) ->
         )
 
         pipeline = IngestionPipeline(
-            embedding_pipeline=EmbeddingPipeline(get_embedding_provider()),
+            embedding_pipeline=EmbeddingPipeline(
+                get_embedding_provider(),
+                batch_size=settings.embedding_batch_size,
+            ),
             indexer=build_indexer(),
         )
         result = await pipeline.run(document, data)
@@ -113,17 +117,27 @@ async def _delete_async(document_id: str, tenant_id: str) -> dict:
 
     # 1. Remove vectors for this document (filtered delete — never wipe the collection)
     indexer = build_indexer()
+    from qdrant_client.http.exceptions import UnexpectedResponse
     from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-    indexer.client.delete(
-        collection_name=indexer.collection,
-        points_selector=Filter(
-            must=[
-                FieldCondition(key="document_id", match=MatchValue(value=document_id)),
-                FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
-            ]
-        ),
-    )
+    try:
+        indexer.client.delete(
+            collection_name=indexer.collection,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="document_id", match=MatchValue(value=document_id)
+                    ),
+                    FieldCondition(
+                        key="tenant_id", match=MatchValue(value=tenant_id)
+                    ),
+                ]
+            ),
+        )
+    except UnexpectedResponse as exc:
+        # The collection may not exist yet (nothing ingested on this backend)
+        if getattr(exc, "status_code", None) != 404:
+            raise
 
     # 2. Remove the original file
     storage = ObjectStorage()
