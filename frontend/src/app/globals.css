@@ -169,18 +169,71 @@ button {
   color: var(--ink);
 }
 
-.rail-mark {
+.rail-user {
+  position: relative;
   margin-top: auto;
+}
+
+.rail-menu {
+  position: absolute;
+  left: 0;
+  bottom: 52px;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  z-index: 40;
+}
+
+.rail-menu-email {
+  padding: 7px 9px;
+  color: var(--muted-2);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-menu a,
+.rail-menu button {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 9px;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 550;
+  text-align: left;
+}
+
+.rail-menu a:hover,
+.rail-menu button:hover {
+  background: var(--soft);
+}
+
+.rail-mark {
   width: 40px;
   height: 40px;
   display: grid;
   place-items: center;
+  overflow: hidden;
+  border: 0;
   border-radius: 50%;
   background: var(--ink);
   color: #fff;
   font-size: 15px;
   font-weight: 700;
   letter-spacing: -0.02em;
+}
+
+.rail-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* ---------- Chat page ---------- */
@@ -314,6 +367,26 @@ button {
 
 /* ---------- Conversation history ---------- */
 
+.web-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.web-toggle.active {
+  border-color: #b9b4ff;
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
 .history-toggle {
   width: 38px;
   height: 38px;
@@ -428,6 +501,232 @@ button {
   gap: 6px;
   padding-right: 2px;
   overflow-y: auto;
+}
+
+/* ---------- Login / auth callback ---------- */
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.login-card {
+  width: min(420px, 100%);
+  padding: 34px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  text-align: center;
+}
+
+.login-mark {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.login-card h1 {
+  margin: 8px 0 10px;
+  font-size: 23px;
+  letter-spacing: -0.03em;
+}
+
+.login-card p {
+  margin: 0 0 20px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.login-card button {
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 16px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.login-card button:disabled {
+  opacity: 0.6;
+}
+
+.login-card small {
+  display: block;
+  margin-top: 18px;
+  color: var(--muted-2);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.auth-loading {
+  padding: 40px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---------- Settings ---------- */
+
+.settings-page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 42px 32px 64px;
+}
+
+.settings-head h1 {
+  margin: 4px 0 8px;
+  font-size: 28px;
+  letter-spacing: -0.03em;
+}
+
+.settings-head p,
+.settings-card-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.settings-eyebrow {
+  color: var(--muted-2);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.settings-card {
+  margin-top: 24px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+}
+
+.settings-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-card-head h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+}
+
+.settings-status {
+  flex-shrink: 0;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.settings-status.configured {
+  background: #e9f8ef;
+  color: #237a49;
+}
+
+.settings-masked {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-field input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--ink);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-check input {
+  accent-color: var(--ink);
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.settings-actions button {
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 14px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-actions button.secondary {
+  background: var(--soft);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.settings-actions button.danger {
+  background: #fff1f1;
+  color: #b42318;
+  border: 1px solid #f4c7c3;
+}
+
+.settings-actions button:disabled {
+  opacity: 0.55;
+}
+
+.settings-ok,
+.settings-error {
+  margin: 14px 0 0;
+  font-size: 12px;
+}
+
+.settings-ok {
+  color: #237a49;
+}
+
+.settings-error {
+  color: #b42318;
 }
 
 .history-settings {
@@ -955,7 +1254,8 @@ button {
 }
 
 .assistant-meta {
-  display: inline-flex;
+  display: flex;
+  width: fit-content;
   align-items: center;
   gap: 7px;
   margin-bottom: 8px;
@@ -1087,9 +1387,11 @@ button {
 }
 
 .status-line {
-  display: inline-flex;
+  display: flex;
+  width: fit-content;
   align-items: center;
   gap: 8px;
+  margin-top: 2px;
   color: var(--muted);
   font-size: 12.5px;
   font-style: normal;
@@ -1099,9 +1401,17 @@ button {
 }
 
 .status-detail {
+  display: inline-flex;
+  align-items: center;
   color: var(--muted-2);
   font-size: 11px;
   font-weight: 500;
+}
+
+.status-detail::before {
+  content: "·";
+  margin-right: 6px;
+  color: #b9bbc7;
 }
 
 .status-dot {

@@ -109,6 +109,13 @@ services:
       QDRANT_URL: http://qdrant:6333
       S3_ENDPOINT_URL: http://minio:9000
       AUTH_DISABLED: ${AUTH_DISABLED:-false}
+      AUTH_BOOTSTRAP_EMAILS: ${AUTH_BOOTSTRAP_EMAILS:-}
+      AUTH_BOOTSTRAP_TENANT_ID: ${AUTH_BOOTSTRAP_TENANT_ID:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-https://rag.thuyetmt.io.vn/auth/callback}
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
       # Anthropic-compatible proxy. RAG_* names keep the app independent of
       # the host shell's own ANTHROPIC_* variables (e.g. agent tooling).
       ANTHROPIC_BASE_URL: ${RAG_ANTHROPIC_BASE_URL:-}
@@ -152,6 +159,9 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   worker:
+    # Docling runs on the GPU when available; ingestion is async, so it can
+    # share the RTX 3060 with the reranker (watch VRAM under load).
+    gpus: all
     build:
       context: ./backend
       args:
@@ -174,7 +184,7 @@ services:
       EMBEDDING_QUERY_INSTRUCTION: "${RAG_EMBEDDING_QUERY_INSTRUCTION-Given a Vietnamese question, retrieve passages that answer the question}"
       QDRANT_COLLECTION: ${RAG_QDRANT_COLLECTION:-chunks_qwen3_8b}
       # Optional scientific-PDF parser (only present when built with Docling).
-      DOCLING_DEVICE: ${RAG_DOCLING_DEVICE:-cpu}
+      DOCLING_DEVICE: ${RAG_DOCLING_DEVICE:-auto}
       DOCLING_OCR: "false"
       HF_HOME: /models/hf
     volumes:
@@ -202,7 +212,10 @@ services:
       - frontend
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_OAUTH_ENABLED: ${RAG_OAUTH_ENABLED:-false}
     ports:
       - "3000:3000"
     depends_on:

@@ -194,4 +194,5 @@ def _to_source(reference_id: str, evidence: RetrievedEvidence) -> SourceReferenc
         page_end=evidence.page_end,
         heading_path=evidence.heading_path,
         snippet=evidence.content[:300],
+        url=evidence.metadata.get("url") if evidence.metadata else None,
     )

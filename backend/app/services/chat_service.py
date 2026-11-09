@@ -102,6 +102,7 @@ class ChatService:
         user_query: str,
         conversation_context: list[dict[str, Any]] | None = None,
         document_ids: list[str] | None = None,
+        web_evidence: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[dict[str, str]]:
         """Yield {"event": ..., "data": json} dicts — the SSE contract.
 
@@ -121,6 +122,7 @@ class ChatService:
             conversation_context=conversation_context,
             limits=self.ctx.limits,
             document_ids=document_ids,
+            web_evidence=web_evidence,
         )
 
         try:

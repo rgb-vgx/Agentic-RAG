@@ -28,7 +28,7 @@ import asyncio
 import json
 import logging
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -37,6 +37,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.agentic_rag.graph.nodes import NodeContext
 from app.auth import Principal, get_principal
 from app.config import settings
+from app.integrations import tavily
 from app.infrastructure.database.repositories import (
     AgentRunRepository,
     ConversationRepository,
@@ -44,6 +45,7 @@ from app.infrastructure.database.repositories import (
 )
 from app.infrastructure.database.session import get_session_factory
 from app.services.chat_service import ChatRunResult, ChatService
+from app.services.integration_settings import IntegrationSettingsService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -82,6 +84,8 @@ class ChatRequest(BaseModel):
     # client-selected documents: only ever intersected with what the user
     # can already see, never used to widen access
     document_ids: list[UUID] | None = None
+    # Per-user Tavily toggle; requires a configured integration key.
+    web_search: bool = False
 
 
 class CitationEvent(BaseModel):
@@ -90,6 +94,7 @@ class CitationEvent(BaseModel):
     document_id: UUID
     page_start: int | None = None
     page_end: int | None = None
+    url: str | None = None
 
 
 @router.post("")
@@ -130,6 +135,44 @@ async def chat(
         document_metadata = await documents.retrieval_metadata(
             list(snapshot.keys())
         )
+
+    web_evidence: list[dict] = []
+    if body.web_search:
+        async with session_factory() as session:
+            api_key = await IntegrationSettingsService(
+                session, principal
+            ).get_key("tavily")
+        if not api_key:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Tavily chưa được cấu hình trong Settings",
+            )
+        try:
+            results = await asyncio.wait_for(
+                tavily.search(api_key, body.query), timeout=25
+            )
+        except Exception as exc:  # noqa: BLE001 - external search failure
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                f"Tavily search failed: {exc}",
+            ) from exc
+        for index, item in enumerate(results[:5], start=1):
+            web_evidence.append(
+                {
+                    "chunk_id": f"web-{uuid4()}",
+                    "document_id": str(uuid4()),
+                    "content": f"{item.title}\n{item.content}",
+                    "score": item.score,
+                    "page_start": None,
+                    "page_end": None,
+                    "heading_path": [item.title],
+                    "metadata": {
+                        "url": item.url,
+                        "title": item.title,
+                        "source": "web",
+                    },
+                }
+            )
 
     # 2) Build dependencies before writing a run row: a misconfigured
     #    provider must not leave an orphaned "running" run behind.
@@ -210,6 +253,7 @@ async def chat(
                 user_query=body.query,
                 conversation_context=conversation_context,
                 document_ids=snapshot_document_ids,
+                web_evidence=web_evidence,
             ):
                 if event["event"] in ("completed", "error"):
                     try:

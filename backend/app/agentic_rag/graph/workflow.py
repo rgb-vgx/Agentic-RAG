@@ -80,6 +80,7 @@ def initial_state(
     conversation_context: list[dict[str, Any]] | None = None,
     limits: WorkflowLimits | None = None,
     document_ids: list[str] | None = None,
+    web_evidence: list[dict[str, Any]] | None = None,
 ) -> AgentState:
     """Seed state for one agent run (Section 10)."""
     limits = limits or WorkflowLimits()
@@ -96,6 +97,7 @@ def initial_state(
         retrieval_plan={},
         retrieval_results=[],
         evidence_groups=[],
+        web_evidence=web_evidence or [],
         evidence_status="",
         iteration_count=0,
         budget_remaining=True,

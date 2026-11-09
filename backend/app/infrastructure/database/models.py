@@ -59,6 +59,7 @@ class UserRecord(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     google_sub: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     email: Mapped[str] = mapped_column(Text, nullable=False)
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -106,6 +107,25 @@ class DocumentDomainRecord(Base, TenantMixin):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "slug", name="uq_document_domains_tenant_slug"),
+    )
+
+
+class IntegrationSettingRecord(Base, TenantMixin):
+    __tablename__ = "integration_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    encrypted_key: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "user_id", "provider", name="uq_integration_tenant_user_provider"
+        ),
     )
 
 

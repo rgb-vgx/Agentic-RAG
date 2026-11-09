@@ -21,6 +21,7 @@ class SourceReference(BaseModel):
     page_end: int | None = None
     heading_path: list[str] = Field(default_factory=list)
     snippet: str = ""
+    url: str | None = None
 
 
 class Message(BaseModel):

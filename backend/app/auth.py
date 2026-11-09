@@ -139,6 +139,7 @@ class GoogleIdentity:
     sub: str
     email: str
     email_verified: bool
+    picture: str = ""
 
 
 GoogleVerifier = Callable[[str], Awaitable[GoogleIdentity]]   # raise ValueError nếu token xấu
@@ -154,6 +155,11 @@ def make_google_verifier(client_id: str) -> GoogleVerifier:
             return g_id_token.verify_oauth2_token(id_token_str, g_requests.Request(), client_id)
 
         info = await run_in_threadpool(_sync)
-        return GoogleIdentity(info["sub"], info.get("email", ""), bool(info.get("email_verified")))
+        return GoogleIdentity(
+            info["sub"],
+            info.get("email", ""),
+            bool(info.get("email_verified")),
+            info.get("picture", "") or "",
+        )
 
     return verify

@@ -162,6 +162,7 @@ function normalizeSources(raw: unknown[]): SourceReference[] {
             )
           : [],
         snippet: typeof source.snippet === "string" ? source.snippet : "",
+        url: typeof source.url === "string" ? source.url : null,
       },
     ];
   });
@@ -195,9 +196,11 @@ export default function ChatPage() {
   const [autoTitle, setAutoTitle] = useState(true);
   const [titleModel, setTitleModel] = useState("");
   const [statusDetail, setStatusDetail] = useState("");
+  const [webSearch, setWebSearch] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const conversationPromiseRef = useRef<Promise<string> | null>(null);
 
   const hasConversation = messages.length > 0;
 
@@ -234,16 +237,28 @@ export default function ChatPage() {
     }
   }
 
+  function ensureConversation(): Promise<string> {
+    if (conversationId) return Promise.resolve(conversationId);
+    if (!conversationPromiseRef.current) {
+      conversationPromiseRef.current = api
+        .createConversation()
+        .then((conversation) => {
+          setConversationId(conversation.id);
+          void refreshConversations();
+          return conversation.id;
+        })
+        .catch((err) => {
+          conversationPromiseRef.current = null;
+          throw err;
+        });
+    }
+    return conversationPromiseRef.current;
+  }
+
   function startConversation() {
-    api
-      .createConversation()
-      .then((conversation) => {
-        setConversationId(conversation.id);
-        void refreshConversations();
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
-      });
+    void ensureConversation().catch((err) => {
+      setError(err instanceof Error ? err.message : String(err));
+    });
   }
 
   async function openConversation(id: string) {
@@ -338,9 +353,18 @@ export default function ChatPage() {
   async function send() {
     const query = input.trim();
     if (!query || isStreaming) return;
-    if (!conversationId) {
-      setError("Cuộc hội thoại chưa sẵn sàng, thử lại sau một giây.");
-      return;
+    let activeConversationId = conversationId;
+    if (!activeConversationId) {
+      try {
+        activeConversationId = await ensureConversation();
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Không tạo được cuộc hội thoại, thử lại sau."
+        );
+        return;
+      }
     }
 
     setInput("");
@@ -356,9 +380,10 @@ export default function ChatPage() {
     try {
       await streamChat(
         {
-          conversation_id: conversationId,
+          conversation_id: activeConversationId,
           query,
           model: model || undefined,
+          web_search: webSearch,
         },
         (event: StreamEvent) => {
           switch (event.event) {
@@ -398,7 +423,7 @@ export default function ChatPage() {
       finishMessage(assistantId);
       abortRef.current = null;
       void refreshConversations();
-      void maybeAutoTitle(conversationId);
+      void maybeAutoTitle(activeConversationId);
     }
   }
 
@@ -424,6 +449,7 @@ export default function ChatPage() {
     setInput("");
     setError(null);
     setConversationId(null);
+    conversationPromiseRef.current = null;
     startConversation();
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
@@ -537,6 +563,17 @@ export default function ChatPage() {
         <div className="topbar-actions">
           <button
             type="button"
+            className={`web-toggle${webSearch ? " active" : ""}`}
+            onClick={() => setWebSearch((value) => !value)}
+            aria-pressed={webSearch}
+            aria-label="Bật/tắt tìm kiếm web"
+            title={webSearch ? "Đang bật tìm kiếm web" : "Bật tìm kiếm web"}
+          >
+            <SearchIcon size={15} />
+            Web
+          </button>
+          <button
+            type="button"
             className="history-toggle"
             onClick={() => setHistoryOpen((open) => !open)}
             aria-label="Lịch sử hội thoại"
@@ -626,7 +663,17 @@ export default function ChatPage() {
                         >
                           <span className="ref">[{source.reference_id}]</span>
                           <span className="heading">
-                            {source.heading_path.join(" › ")}
+                            {source.url ? (
+                              <a
+                                href={source.url}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                              >
+                                {source.heading_path.join(" › ")}
+                              </a>
+                            ) : (
+                              source.heading_path.join(" › ")
+                            )}
                             {source.page_start ? ` · tr.${source.page_start}` : ""}
                           </span>
                           <div className="snippet">{source.snippet}</div>

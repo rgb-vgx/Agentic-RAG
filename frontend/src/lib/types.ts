@@ -43,6 +43,21 @@ export interface ConversationItem {
   updated_at?: string | null;
 }
 
+export interface CurrentUser {
+  user_id: string;
+  tenant_id: string;
+  email: string;
+  roles: string[];
+  avatar_url?: string | null;
+}
+
+export interface IntegrationStatus {
+  configured: boolean;
+  enabled: boolean;
+  masked_key?: string | null;
+  updated_at?: string | null;
+}
+
 export interface ModelOption {
   id: string;
   label: string;
@@ -57,6 +72,7 @@ export interface SourceReference {
   page_end?: number | null;
   heading_path: string[];
   snippet: string;
+  url?: string | null;
 }
 
 export interface ChatMessage {

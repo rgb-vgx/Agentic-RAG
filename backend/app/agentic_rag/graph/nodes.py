@@ -269,6 +269,17 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
             semantic = [item for item in groups[0].evidence if item.chunk_id not in seen]
             groups[0].evidence = exact_evidence + semantic
 
+        web_raw = state.get("web_evidence") or []
+        if web_raw:
+            web_items = [RetrievedEvidence(**item) for item in web_raw]
+            groups.append(
+                EvidenceGroup(
+                    task_id="web",
+                    query=query_text,
+                    evidence=web_items,
+                )
+            )
+
         _assign_reference_ids(groups)
 
         span["output"] = {

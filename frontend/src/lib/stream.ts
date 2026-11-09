@@ -22,6 +22,7 @@ export interface ChatStreamRequest {
   knowledge_base_id?: string;
   use_agentic?: boolean | null;
   model?: string | null;
+  web_search?: boolean;
 }
 
 export async function streamChat(
@@ -36,6 +37,11 @@ export async function streamChat(
     signal,
   });
 
+  if (response.status === 401 && typeof window !== "undefined") {
+    const { clearAccessToken } = await import("./oauth");
+    clearAccessToken();
+    window.location.assign("/login");
+  }
   if (!response.ok || !response.body) {
     throw new Error(`Chat request failed: ${response.status} ${response.statusText}`);
   }

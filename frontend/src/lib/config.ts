@@ -18,7 +18,8 @@ export const DOCUMENTS_POLL_INTERVAL_MS = conf.documents_poll_interval_ms;
  * When false, the (future) login UI is skipped. It does NOT disable backend
  * authorization — protected endpoints still require a Bearer token.
  */
-export const OAUTH_ENABLED = conf.oauth_enabled;
+export const OAUTH_ENABLED =
+  process.env.NEXT_PUBLIC_OAUTH_ENABLED === "true" || conf.oauth_enabled;
 
 /**
  * Local-development token, injected via `frontend/.env.local` (never commit

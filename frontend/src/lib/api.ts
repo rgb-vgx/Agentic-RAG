@@ -5,7 +5,9 @@ import { API_PREFIX } from "./config";
 import type {
   ChunkItem,
   ConversationItem,
+  CurrentUser,
   DocumentItem,
+  IntegrationStatus,
   ModelOption,
 } from "./types";
 
@@ -21,6 +23,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!response.ok) {
+    if (response.status === 401 && typeof window !== "undefined") {
+      const { clearAccessToken } = await import("./oauth");
+      clearAccessToken();
+      if (window.location.pathname !== "/login") {
+        window.location.assign("/login");
+      }
+    }
     const body = await response.text().catch(() => "");
     throw new Error(`${response.status} ${response.statusText}: ${body}`);
   }
@@ -31,6 +40,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   // Health
   health: () => request<{ status: string }>("/health"),
+
+  me: () => request<CurrentUser>("/auth/me"),
 
   // Documents
   listDocuments: (knowledgeBaseId?: string) =>
@@ -100,6 +111,24 @@ export const api = {
   // Models
   listModels: () =>
     request<{ items: ModelOption[]; default: string }>("/models"),
+
+  // Integrations (per user)
+  getTavily: () => request<IntegrationStatus>("/integrations/tavily"),
+
+  saveTavily: (apiKey: string | null, enabled: boolean) =>
+    request<IntegrationStatus>("/integrations/tavily", {
+      method: "PUT",
+      body: JSON.stringify({ api_key: apiKey, enabled }),
+    }),
+
+  deleteTavily: () =>
+    request<void>("/integrations/tavily", { method: "DELETE" }),
+
+  testTavily: (apiKey?: string) =>
+    request<{ ok: boolean }>("/integrations/tavily/test", {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey || null }),
+    }),
 
   // Conversations
   listConversations: () =>

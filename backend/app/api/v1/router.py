@@ -8,7 +8,16 @@ public_router (guard test: tests/integration/test_auth.py).
 
 from fastapi import APIRouter, Depends
 
-from app.api.v1 import auth, chat, conversations, documents, domains, health, models
+from app.api.v1 import (
+    auth,
+    chat,
+    conversations,
+    documents,
+    domains,
+    health,
+    integrations,
+    models,
+)
 from app.auth import get_principal
 
 public_router = APIRouter()
@@ -27,6 +36,9 @@ protected_router.include_router(
     conversations.router, prefix="/conversations", tags=["conversations"]
 )
 protected_router.include_router(chat.router, prefix="/chat", tags=["chat"])
+protected_router.include_router(
+    integrations.router, prefix="/integrations", tags=["integrations"]
+)
 
 api_router = APIRouter()
 api_router.include_router(public_router)

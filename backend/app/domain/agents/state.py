@@ -37,6 +37,8 @@ class AgentState(TypedDict, total=False):
 
     retrieval_results: list[dict[str, Any]]
     evidence_groups: list[dict[str, Any]]
+    # Optional Tavily results, already normalized to RetrievedEvidence dicts.
+    web_evidence: list[dict[str, Any]]
 
     evidence_status: str
 

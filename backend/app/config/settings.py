@@ -154,7 +154,11 @@ class Settings(BaseSettings):
     # Auth
     google_client_id: str = ""
     google_client_secret: str = ""
+    google_redirect_uri: str = "https://rag.thuyetmt.io.vn/auth/callback"
     jwt_secret: str = "change-me"
+    # Encrypts per-user integration credentials (Tavily API keys) at rest.
+    # Falls back to a key derived from JWT_SECRET when unset.
+    integration_encryption_key: str = ""
     jwt_issuer: str = "rag-api"
     jwt_audience: str = "rag-web"
     jwt_access_ttl_seconds: int = 900
@@ -162,6 +166,10 @@ class Settings(BaseSettings):
     # Development-only: skip Bearer authentication. Refused when
     # APP_ENV != development (see create_app).
     auth_disabled: bool = False
+    # Comma-separated verified Google emails allowed to bootstrap a membership
+    # on first login (invite-only stays the default for everyone else).
+    auth_bootstrap_emails: str = ""
+    auth_bootstrap_tenant_id: str = ""
     dev_user_id: UUID = UUID("00000000-0000-0000-0000-000000000001")
     dev_tenant_id: UUID = UUID("00000000-0000-0000-0000-000000000002")
 
