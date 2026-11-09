@@ -9,6 +9,7 @@ Section 6.1).
 from app.domain.retrieval.types import RetrievedEvidence
 from app.infrastructure.vectorstores.qdrant_store import HybridRetriever
 from app.infrastructure.vectorstores.sparse import SparseEncoder
+from app.ingestion.legal_metadata import LegalReference
 
 
 class HybridRetrievalTool:
@@ -48,6 +49,129 @@ class HybridRetrievalTool:
             self.retriever.to_evidence(hit, reference_id=f"R{i + 1}")
             for i, hit in enumerate(hits)
         ]
+
+
+class ExactLegalReferenceTool:
+    """Fetch a referenced Điều directly by metadata, bypassing similarity.
+
+    The article's chunks are concatenated in source order so synthesis sees
+    the whole article even when chunking split it; exact candidates are never
+    truncated to the semantic top-K.
+    """
+
+    name = "exact_legal_reference"
+
+    def __init__(self, retriever: HybridRetriever):
+        self.retriever = retriever
+
+    async def run(
+        self,
+        reference: LegalReference,
+        tenant_id: str,
+        documents: list[dict] | None = None,
+        document_ids: list[str] | None = None,
+        resolved_document_id: str | None = None,
+        limit: int = 200,
+    ) -> list[RetrievedEvidence]:
+        from qdrant_client.models import (
+            FieldCondition,
+            Filter,
+            MatchAny,
+            MatchValue,
+        )
+
+        if not reference.article_number:
+            return []
+
+        must = [
+            FieldCondition(key="tenant_id", match=MatchValue(value=tenant_id)),
+            FieldCondition(key="active", match=MatchValue(value=True)),
+            FieldCondition(
+                key="article_number",
+                match=MatchValue(value=reference.article_number),
+            ),
+        ]
+        if resolved_document_id:
+            must.append(
+                FieldCondition(
+                    key="document_id",
+                    match=MatchValue(value=resolved_document_id),
+                )
+            )
+        elif document_ids:
+            must.append(
+                FieldCondition(key="document_id", match=MatchAny(any=document_ids))
+            )
+
+        records, _ = await self.retriever.client.scroll(
+            collection_name=self.retriever.collection,
+            scroll_filter=Filter(must=must),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        if not records:
+            return []
+
+        by_document: dict[str, list] = {}
+        for record in records:
+            payload = record.payload or {}
+            by_document.setdefault(str(payload.get("document_id", "")), []).append(
+                payload
+            )
+
+        titles = {
+            str(doc.get("id")): doc.get("title") or doc.get("filename") or ""
+            for doc in (documents or [])
+        }
+
+        evidence: list[RetrievedEvidence] = []
+        for document_id, payloads in by_document.items():
+            payloads.sort(
+                key=lambda item: (
+                    item.get("chunk_index") or 0,
+                    item.get("page_start") or 0,
+                )
+            )
+            content = "\n\n".join(
+                str(item.get("content") or "").strip()
+                for item in payloads
+                if item.get("content")
+            ).strip()
+            if not content:
+                continue
+            first = payloads[0]
+            heading_path = list(first.get("heading_path") or [])
+            document_title = titles.get(document_id) or first.get("document_title")
+            if document_title and len(by_document) > 1:
+                # Ambiguous reference: keep the document visible in citation.
+                heading_path = [str(document_title), *heading_path]
+            pages = [
+                int(item["page_start"])
+                for item in payloads
+                if item.get("page_start") is not None
+            ]
+            evidence.append(
+                RetrievedEvidence(
+                    chunk_id=str(first.get("chunk_id") or ""),
+                    document_id=document_id,
+                    content=content,
+                    score=1.0,
+                    page_start=min(pages) if pages else None,
+                    page_end=max(pages) if pages else None,
+                    heading_path=heading_path,
+                    metadata={
+                        "retrieval_method": "exact_legal_reference",
+                        "article_number": reference.article_number,
+                        "article_title": first.get("article_title"),
+                        "document_title": document_title,
+                        "source_chunk_ids": [
+                            str(item.get("chunk_id") or "") for item in payloads
+                        ],
+                    },
+                )
+            )
+        return evidence
 
 
 class ContextExpansionTool:

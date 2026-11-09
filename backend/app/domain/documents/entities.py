@@ -56,6 +56,12 @@ class Document(BaseModel):
     file_hash: str
     file_type: str
 
+    # Legal identity extracted from the parsed document.
+    title: str | None = None
+    title_normalized: str | None = None
+    document_number: str | None = None
+    document_year: int | None = None
+
     status: DocumentStatus = DocumentStatus.UPLOADED
     error_message: str | None = None
     quality_report: DocumentQualityReport | None = None

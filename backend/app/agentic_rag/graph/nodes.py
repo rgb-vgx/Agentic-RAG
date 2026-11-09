@@ -9,21 +9,38 @@ Node flow:
     evaluate → (loop | synthesize)] → validate_citations → persist
 """
 
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.agentic_rag.evaluation.evidence import EvidenceEvaluator
 from app.agentic_rag.planning import QueryAnalyzer, QueryResolver, RetrievalPlanner, route_path
-from app.agentic_rag.retrieval.tools import ContextExpansionTool, HybridRetrievalTool, RerankTool
+from app.agentic_rag.retrieval.tools import (
+    ContextExpansionTool,
+    ExactLegalReferenceTool,
+    HybridRetrievalTool,
+    RerankTool,
+)
 from app.agentic_rag.synthesis.synthesizer import AnswerSynthesizer
 from app.agentic_rag.validation.citations import CitationValidator
-from app.domain.agents.state import AgentState, WorkflowLimits
-from app.domain.retrieval.types import EvidenceGroup, EvidenceStatus, RetrievalPlan
 from app.config import settings
+from app.domain.agents.state import AgentState, WorkflowLimits
+from app.domain.retrieval.types import (
+    EvidenceGroup,
+    EvidenceStatus,
+    RetrievalPlan,
+    RetrievedEvidence,
+)
 from app.infrastructure.llm.base import BaseLLMClient
 from app.infrastructure.observability.langfuse_tracer import trace_node
 from app.infrastructure.vectorstores.qdrant_store import HybridRetriever
+from app.ingestion.legal_metadata import (
+    document_metadata_payload,
+    has_explicit_document_hint,
+    is_pure_reference,
+    parse_legal_reference,
+    resolve_document,
+    resolve_document_from_context,
+)
 
 
 @dataclass
@@ -34,6 +51,8 @@ class NodeContext:
     retriever: HybridRetriever
     embedder: Any  # BaseEmbeddingProvider
     limits: WorkflowLimits = field(default_factory=WorkflowLimits)
+    # Visible documents (identity metadata) for exact legal references.
+    documents: list[dict] = field(default_factory=list)
 
     resolver: QueryResolver | None = None
     analyzer: QueryAnalyzer | None = None
@@ -44,6 +63,7 @@ class NodeContext:
     hybrid_tool: HybridRetrievalTool | None = None
     rerank_tool: RerankTool | None = None
     expansion_tool: ContextExpansionTool | None = None
+    exact_tool: ExactLegalReferenceTool | None = None
 
     def __post_init__(self):
         self.resolver = self.resolver or QueryResolver(self.llm)
@@ -56,6 +76,7 @@ class NodeContext:
         self.hybrid_tool = self.hybrid_tool or HybridRetrievalTool(self.retriever)
         self.rerank_tool = self.rerank_tool or RerankTool()
         self.expansion_tool = self.expansion_tool or ContextExpansionTool(self.retriever)
+        self.exact_tool = self.exact_tool or ExactLegalReferenceTool(self.retriever)
 
 
 # ---------------------------------------------------------------------------
@@ -120,17 +141,80 @@ async def plan_node(state: AgentState, ctx: NodeContext) -> dict:
 
 
 async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
-    """Run every retrieval task, then rerank (Sections 7.2, 11)."""
+    """Run retrieval tasks, then rerank (Sections 7.2, 11).
+
+    Exact legal references ("Điều 19 Bộ luật tố tụng dân sự") are fetched
+    from metadata first. Structural candidates are never pushed through the
+    semantic top-K truncation; pure citation queries skip embeddings.
+    """
     async with trace_node("retrieve", run_id=state.get("run_id")) as span:
         plan = RetrievalPlan(**state["retrieval_plan"])
         resolved = state["resolved_query"]
-        query_vector = await ctx.embedder.embed_query(
-            resolved.get("standalone_query", state.get("user_query", ""))
-        )
+        query_text = resolved.get("standalone_query", state.get("user_query", ""))
 
         # Restrict to documents the caller may see (None = legacy/no filter).
         # An empty snapshot must never fall back to a tenant-wide search.
         snapshot = state.get("snapshot_document_ids")
+
+        reference = parse_legal_reference(query_text)
+        exact_evidence: list[RetrievedEvidence] = []
+        resolved_document: dict | None = None
+        if reference is not None:
+            documents = document_metadata_payload(ctx.documents)
+            resolved_document, _ambiguous = resolve_document(reference, documents)
+            if resolved_document is None and not has_explicit_document_hint(reference):
+                resolved_document = resolve_document_from_context(
+                    documents, state.get("conversation_context")
+                )
+            # If the query names a document that is not in this knowledge base,
+            # do not fall back to an article from a different law.
+            unresolved_hint = (
+                has_explicit_document_hint(reference)
+                and resolved_document is None
+            )
+            if (snapshot is not None and not snapshot) or unresolved_hint:
+                exact_evidence = []
+            else:
+                exact_evidence = await ctx.exact_tool.run(
+                    reference,
+                    tenant_id=state["tenant_id"],
+                    documents=documents,
+                    document_ids=snapshot,
+                    resolved_document_id=(
+                        str(resolved_document["id"]) if resolved_document else None
+                    ),
+                )
+
+        # A pure citation query needs no embedding and no semantic truncation.
+        if (
+            reference is not None
+            and exact_evidence
+            and is_pure_reference(query_text, reference, resolved_document)
+        ):
+            task = plan.retrieval_tasks[0]
+            groups = [
+                EvidenceGroup(
+                    task_id=task.task_id,
+                    query=query_text,
+                    evidence=exact_evidence,
+                )
+            ]
+            _assign_reference_ids(groups)
+            clarification = None
+            if resolved_document is None and len(exact_evidence) > 1:
+                clarification = _build_clarification(reference, exact_evidence)
+            span["output"] = {
+                "groups": 1,
+                "evidence": len(exact_evidence),
+                "exact_reference": True,
+                "clarification": bool(clarification),
+            }
+            return {
+                "evidence_groups": [g.model_dump(mode="json") for g in groups],
+                "clarification": clarification,
+            }
+
+        query_vector = await ctx.embedder.embed_query(query_text)
         groups: list[EvidenceGroup] = []
         for task in plan.retrieval_tasks:
             if snapshot is not None and not snapshot:
@@ -175,25 +259,73 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
                 )
             )
 
-        # Reference ids are assigned after final ordering for stable citations
-        counter = 1
-        for group in groups:
-            for evidence in group.evidence:
-                evidence.reference_id = f"R{counter}"
-                counter += 1
+        # Mixed query: preserve structural candidates ahead of semantic ones.
+        if exact_evidence and groups:
+            seen = {item.chunk_id for item in exact_evidence}
+            semantic = [item for item in groups[0].evidence if item.chunk_id not in seen]
+            groups[0].evidence = exact_evidence + semantic
+
+        _assign_reference_ids(groups)
 
         span["output"] = {
             "groups": len(groups),
             "evidence": sum(len(g.evidence) for g in groups),
+            "exact_reference": bool(exact_evidence),
         }
         return {
             "evidence_groups": [g.model_dump(mode="json") for g in groups],
         }
 
 
+def _build_clarification(
+    reference, evidence: list[RetrievedEvidence]
+) -> dict[str, Any]:
+    """Ask which document a bare article reference belongs to."""
+    options = []
+    for item in evidence:
+        document_title = item.metadata.get("document_title")
+        if not document_title and len(item.heading_path) > 1:
+            document_title = item.heading_path[0]
+        article_title = item.metadata.get("article_title")
+        options.append(
+            {
+                "document_id": str(item.document_id),
+                "document_title": document_title or "",
+                "article_title": article_title or "",
+            }
+        )
+
+    lines = [f"Điều {reference.article_number} có trong nhiều văn bản:"]
+    for option in options:
+        title = option["document_title"] or "Không rõ tên văn bản"
+        article_title = f" — {option['article_title']}" if option["article_title"] else ""
+        lines.append(f"- **{title}**{article_title}")
+    lines.append("Bạn muốn xem văn bản nào?")
+    return {
+        "question": "\n".join(lines),
+        "article_number": reference.article_number,
+        "options": options,
+    }
+
+
+def _assign_reference_ids(groups: list[EvidenceGroup]) -> None:
+    """Assign stable R ids after final ordering."""
+    counter = 1
+    for group in groups:
+        for evidence in group.evidence:
+            evidence.reference_id = f"R{counter}"
+            counter += 1
+
+
 async def evaluate_node(state: AgentState, ctx: NodeContext) -> dict:
     """Evidence sufficiency check per group (Section 7.3)."""
     async with trace_node("evaluate", run_id=state.get("run_id")) as span:
+        if state.get("clarification"):
+            span["output"] = {"status": "clarification", "missing": 0}
+            return {
+                "evidence_status": EvidenceStatus.SUFFICIENT.value,
+                "iteration_count": state.get("iteration_count", 0) + 1,
+            }
         groups = [EvidenceGroup(**g) for g in state.get("evidence_groups", [])]
         statuses: list[str] = []
         missing: list[str] = []
@@ -250,6 +382,11 @@ def should_continue(state: AgentState) -> str:
 async def synthesize_node(state: AgentState, ctx: NodeContext) -> dict:
     """Generate the grounded answer (Section 7.4)."""
     async with trace_node("synthesize", run_id=state.get("run_id")) as span:
+        clarification = state.get("clarification")
+        if clarification:
+            answer = clarification.get("question", "")
+            span["output"] = {"answer_chars": len(answer), "clarification": True}
+            return {"final_answer": answer}
         groups = [EvidenceGroup(**g) for g in state.get("evidence_groups", [])]
         # Keep the prompt inside the local model's context window: Ollama
         # truncates from the start, which drops the system prompt and the
@@ -271,6 +408,14 @@ async def synthesize_node(state: AgentState, ctx: NodeContext) -> dict:
 async def validate_citations_node(state: AgentState, ctx: NodeContext) -> dict:
     """Deterministic citation validation with claim-support check (7.5)."""
     async with trace_node("validate_citations", run_id=state.get("run_id")) as span:
+        if state.get("clarification"):
+            span["output"] = {"clarification": True}
+            return {
+                "final_answer": state.get("final_answer") or "",
+                "citations": [],
+                "invalid_citations": [],
+                "validation_fallback": False,
+            }
         answer = state.get("final_answer") or ""
         groups = [EvidenceGroup(**g) for g in state.get("evidence_groups", [])]
 

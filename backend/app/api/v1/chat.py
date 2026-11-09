@@ -110,6 +110,9 @@ async def chat(
             for message in history
         ]
         snapshot = await documents.active_chunk_sets(body.document_ids)
+        document_metadata = await documents.retrieval_metadata(
+            list(snapshot.keys())
+        )
 
     # 2) Build dependencies before writing a run row: a misconfigured
     #    provider must not leave an orphaned "running" run behind.
@@ -118,6 +121,7 @@ async def chat(
         ctx: NodeContext = factory(selected.provider, selected.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    ctx.documents = document_metadata
 
     # 3) Create the run and persist the user's message.
     async with session_factory() as session:

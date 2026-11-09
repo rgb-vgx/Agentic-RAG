@@ -101,6 +101,7 @@ def initial_state(
         budget_remaining=True,
         final_answer=None,
         citations=[],
+        clarification=None,
         errors=[],
         routing_path="",
     )

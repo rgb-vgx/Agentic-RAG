@@ -62,6 +62,10 @@ async def _process_async(document_id: str, tenant_id: str, storage_path: str) ->
             storage_path=record.storage_path,
             file_hash=record.file_hash,
             file_type=record.file_type,
+            title=record.title,
+            title_normalized=record.title_normalized,
+            document_number=record.document_number,
+            document_year=record.document_year,
             # Carries the previous chunk_set_id so reprocess retires it
             run_metadata=record.run_metadata or {},
         )
@@ -80,6 +84,10 @@ async def _process_async(document_id: str, tenant_id: str, storage_path: str) ->
         record.quality_report = (
             result.quality_report.model_dump() if result.quality_report else None
         )
+        record.title = result.title
+        record.title_normalized = result.title_normalized
+        record.document_number = result.document_number
+        record.document_year = result.document_year
         record.run_metadata = result.run_metadata
         if result.active_chunk_set_id:
             record.active_chunk_set_id = result.active_chunk_set_id

@@ -162,6 +162,41 @@ class DocumentRepository:
         result = await self.session.execute(stmt)
         return {row[0]: row[1] for row in result.all()}
 
+    async def retrieval_metadata(
+        self, document_ids: list[UUID] | None = None
+    ) -> list[dict]:
+        """Identity metadata used to resolve exact legal references.
+
+        Scoped by the same visibility gate as retrieval; never widen it.
+        """
+        stmt = select(
+            DocumentRecord.id,
+            DocumentRecord.filename,
+            DocumentRecord.title,
+            DocumentRecord.title_normalized,
+            DocumentRecord.document_number,
+            DocumentRecord.document_year,
+        ).where(
+            self._visible(),
+            DocumentRecord.active_chunk_set_id.is_not(None),
+            DocumentRecord.quarantined_at.is_(None),
+            DocumentRecord.status != DocumentStatus.DELETING.value,
+        )
+        if document_ids is not None:
+            stmt = stmt.where(DocumentRecord.id.in_(document_ids))
+        result = await self.session.execute(stmt)
+        return [
+            {
+                "id": str(row[0]),
+                "filename": row[1],
+                "title": row[2],
+                "title_normalized": row[3],
+                "document_number": row[4],
+                "document_year": row[5],
+            }
+            for row in result.all()
+        ]
+
     async def update_status(
         self,
         document_id: UUID,

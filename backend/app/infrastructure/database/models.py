@@ -106,6 +106,14 @@ class DocumentRecord(Base, TenantMixin):
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     file_type: Mapped[str] = mapped_column(String(16), nullable=False)
 
+    # Legal identity, extracted during ingestion. Used to resolve exact
+    # references such as "Điều 19 Bộ luật tố tụng dân sự" without relying
+    # on semantic similarity.
+    title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    title_normalized: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    document_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    document_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     status: Mapped[str] = mapped_column(String(24), default="uploaded")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 

@@ -269,6 +269,59 @@ và CORS cũng chỉ mở cho `localhost:3000`.
 
 ---
 
+### 7. Exact legal reference retrieval (Điều/Khoản/Điểm)
+
+**Nghiệp vụ.** Câu hỏi dạng “Điều 19 Bộ luật tố tụng dân sự” phải trả về đúng
+điều luật, đúng văn bản, kèm trích dẫn — thay vì báo thiếu bằng chứng.
+
+**Lý do / điều tra.**
+
+- Tài liệu đã index đủ: Bộ luật tố tụng dân sự có 833 chunk, trong đó chunk
+  `Điều 19` tồn tại.
+- Nhưng dense retrieval xếp chunk này **hạng 339/833**; sparse (khi thử) hạng
+  591/833. Retrieval chỉ lấy 50 ứng viên nên rerank/synthesis không bao giờ thấy
+  Điều 19.
+- Nguyên nhân: câu hỏi tra cứu theo **định danh cấu trúc** (Điều/Khoản/Điểm +
+  tên văn bản), không phải câu hỏi ngữ nghĩa; embedding không phù hợp để khớp
+  số điều.
+
+**Thay đổi.**
+
+- Trích xuất metadata pháp lý khi ingest: `title`, `document_number`,
+  `document_year` (migration `0004`), `article_number`, `article_title`,
+  `legal_unit_id` trong payload Qdrant.
+- Backfill không cần embed lại: script `scripts/backfill_legal_metadata.py`
+  (đã chạy: 1.683 point, 1.577 point có số điều).
+- Parser deterministic cho `Điều/Khoản/Điểm`, số hiệu văn bản, năm, alias
+  (`BLTTDS`, `BLHS`, tên đầy đủ).
+- Resolver chọn văn bản theo metadata, **không dùng semantic score**.
+- Exact lookup lấy toàn bộ chunk của điều, sort theo thứ tự nguồn và ghép thành
+  một evidence; query thuần trích dẫn bỏ qua embedding và top-K truncation.
+- Query hỗn hợp: exact evidence được giữ, dense/rerank bổ sung phần ngữ nghĩa.
+- Endpoint chat truyền metadata tài liệu vào `NodeContext`.
+
+**Kết quả.**
+
+- “Điều 19 của bộ luật tố tụng dân sự” → đúng Điều 19 BLTTDS, đủ 3 khoản,
+  citation `[R1]`.
+- “Điều 19 bộ luật hình sự” → đúng Điều 19 BLHS (“Không tố giác tội phạm”),
+  không nhầm văn bản.
+- “khoản 2 điều 19 bộ luật tố tụng dân sự” → đúng khoản 2.
+- Câu hỏi ngữ nghĩa cũ (“Nhiệm vụ của Bộ luật hình sự là gì?”) vẫn trả lời đúng.
+- 90 unit test pass.
+
+**P1 đã bổ sung.**
+
+- Query chỉ có “Điều 19” mà không nêu văn bản: trả câu hỏi làm rõ kèm danh sách
+  văn bản/điều, không tự chọn một luật và không gọi synthesis.
+- Follow-up dùng conversation context: “Điều 19 Bộ luật hình sự” rồi “còn điều
+  20 thì sao?” vẫn ở đúng Bộ luật hình sự; “Điều 19” rồi “bộ luật tố tụng dân
+  sự” trả đúng BLTTDS.
+- Clause/point hiện dựa trên chunk chứa cả điều; chưa tách chunk theo từng
+  khoản (giữ nguyên cho giai đoạn sau).
+
+---
+
 ## 4ed8a7c — Embedding mặc định bge-m3, tắt sparse
 
 **Nghiệp vụ.** Chất lượng tìm kiếm quyết định chất lượng câu trả lời. Hệ thống

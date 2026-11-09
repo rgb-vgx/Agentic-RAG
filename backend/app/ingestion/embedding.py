@@ -9,6 +9,7 @@ import asyncio
 
 from app.domain.documents.entities import Document
 from app.ingestion.chunking.types import Chunk
+from app.ingestion.legal_metadata import extract_article
 
 
 class EmbeddingPipeline:
@@ -69,7 +70,7 @@ class EmbeddingPipeline:
 
     @staticmethod
     def _payload(chunk: Chunk, document: Document) -> dict:
-        return {
+        payload = {
             "tenant_id": document.tenant_id,
             "knowledge_base_id": document.knowledge_base_id,
             "document_id": str(document.id),
@@ -83,4 +84,16 @@ class EmbeddingPipeline:
             "chunk_index": chunk.chunk_index,
             "parent_chunk_id": chunk.parent_chunk_id,
             "active": True,
+            "document_title": document.title,
+            "document_number": document.document_number,
+            "document_year": document.document_year,
+            "metadata_version": 1,
         }
+        article_number, article_title = extract_article(chunk.heading_path)
+        if article_number:
+            payload["article_number"] = article_number
+            payload["article_title"] = article_title
+            payload["legal_unit_id"] = (
+                f"{document.id}:article:{article_number}"
+            )
+        return payload

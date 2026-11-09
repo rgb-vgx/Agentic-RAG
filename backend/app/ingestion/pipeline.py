@@ -16,6 +16,7 @@ from app.ingestion.analyzer import DocumentAnalyzer
 from app.ingestion.chunking.selection import ChunkingSelector
 from app.ingestion.embedding import EmbeddingPipeline
 from app.ingestion.indexing import QdrantIndexer
+from app.ingestion.legal_metadata import extract_document_metadata
 from app.ingestion.parsers import get_parser
 from app.ingestion.section_builder import SectionBuilder
 
@@ -50,6 +51,13 @@ class IngestionPipeline:
             parser = get_parser(document.file_type)
             ir = parser.parse(file_bytes, document_id=str(document.id),
                               filename=document.filename)
+
+            # Legal identity is needed for exact Điều/Khoản/Điểm lookup.
+            metadata = extract_document_metadata(document.filename, ir)
+            document.title = metadata.title
+            document.title_normalized = metadata.title_normalized
+            document.document_number = metadata.document_number
+            document.document_year = metadata.document_year
 
             # 2. Quality gate (Section 4.4) — runs before chunking
             quality_report = self.analyzer.analyze(ir)

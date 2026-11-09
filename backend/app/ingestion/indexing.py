@@ -86,6 +86,9 @@ class QdrantIndexer:
             "document_id",
             "chunk_set_id",
             "active",
+            "article_number",
+            "document_number",
+            "legal_unit_id",
         ):
             try:
                 self.client.create_payload_index(

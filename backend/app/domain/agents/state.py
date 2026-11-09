@@ -8,12 +8,7 @@ from typing import Any, TypedDict
 
 from pydantic import BaseModel, Field
 
-from app.domain.retrieval.types import (
-    EvidenceGroup,
-    EvidenceStatus,
-    ResolvedQuery,
-    RetrievalPlan,
-)
+from app.domain.retrieval.types import EvidenceStatus
 
 
 class AgentState(TypedDict, total=False):
@@ -55,13 +50,19 @@ class AgentState(TypedDict, total=False):
     # insufficiency message (claim-support check failed)
     validation_fallback: bool
 
+    # Exact-reference ambiguity: ask the user which document they mean
+    # instead of synthesizing an answer from multiple laws.
+    clarification: dict[str, Any] | None
+
     errors: list[dict[str, Any]]
 
 
 class QueryAnalysis(BaseModel):
     """Structured result of the Query Analyzer node."""
 
-    query_type: str = "simple_fact"  # simple_fact | conditional | multi_hop | comparison | summarization | follow_up | no_answer
+    # simple_fact | conditional | multi_hop | comparison | summarization |
+    # follow_up | no_answer
+    query_type: str = "simple_fact"
     complexity: str = "low"  # low | medium | high
     entities: list[str] = Field(default_factory=list)
     required_scope: list[str] = Field(default_factory=list)  # knowledge base / document ids
