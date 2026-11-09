@@ -23,6 +23,7 @@ export interface ChatStreamRequest {
   use_agentic?: boolean | null;
   model?: string | null;
   web_search?: boolean;
+  document_ids?: string[];
 }
 
 export async function streamChat(

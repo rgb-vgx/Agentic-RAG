@@ -12,6 +12,7 @@ import { useChatStore } from "@/store/chat";
 import type {
   ChatMessage,
   ConversationItem,
+  DocumentItem,
   ModelOption,
   StreamEvent,
   SourceReference,
@@ -46,6 +47,37 @@ const STATUS_LABELS: Record<string, string> = {
   working: "Đang xử lý…",
 };
 
+function statusTitle(
+  node: string | null,
+  update: Record<string, unknown> | undefined
+): string {
+  const data = update ?? {};
+  const plan = data.retrieval_plan as
+    | { retrieval_tasks?: Array<{ query?: string }> }
+    | undefined;
+  const tasks = plan?.retrieval_tasks;
+  if (node === "plan" && Array.isArray(tasks) && tasks.length > 0) {
+    return `Đang lập kế hoạch cho ${tasks.length} truy vấn…`;
+  }
+  const groups = data.evidence_groups as Array<{ count?: number }> | undefined;
+  if (node === "retrieve" && Array.isArray(groups)) {
+    return `Đang tìm trong ${groups.length} nhóm tài liệu…`;
+  }
+  if (node === "evaluate" && typeof data.evidence_status === "string") {
+    const labels: Record<string, string> = {
+      SUFFICIENT: "đủ bằng chứng",
+      PARTIALLY_SUFFICIENT: "một phần bằng chứng",
+      INSUFFICIENT: "chưa đủ bằng chứng",
+      CONFLICTING: "bằng chứng mâu thuẫn",
+    };
+    return `Đang kiểm tra bằng chứng — ${labels[data.evidence_status] ?? data.evidence_status}…`;
+  }
+  if (node === "synthesize") {
+    return "Đang tổng hợp câu trả lời từ bằng chứng…";
+  }
+  return node ? (STATUS_LABELS[node] ?? node) : "Đang suy nghĩ…";
+}
+
 function describeStatus(data: {
   node?: string;
   update?: Record<string, unknown>;
@@ -58,12 +90,6 @@ function describeStatus(data: {
   }
   const elapsed = update.elapsed_seconds;
   if (typeof elapsed === "number") parts.push(`${elapsed}s`);
-  const plan = update.retrieval_plan as
-    | { retrieval_tasks?: unknown[] }
-    | undefined;
-  if (Array.isArray(plan?.retrieval_tasks)) {
-    parts.push(`${plan.retrieval_tasks.length} truy vấn`);
-  }
   const groups = update.evidence_groups as
     | Array<{ count?: number }>
     | undefined;
@@ -197,7 +223,14 @@ export default function ChatPage() {
   const [autoTitle, setAutoTitle] = useState(true);
   const [titleModel, setTitleModel] = useState("");
   const [statusDetail, setStatusDetail] = useState("");
+  const [statusUpdate, setStatusUpdate] = useState<Record<string, unknown>>({});
   const [webSearch, setWebSearch] = useState(false);
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [mentionedDocs, setMentionedDocs] = useState<DocumentItem[]>([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionStart, setMentionStart] = useState(0);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -271,6 +304,8 @@ export default function ChatPage() {
     }
     setHistoryLoading(true);
     setError(null);
+    setMentionedDocs([]);
+    setMentionOpen(false);
     try {
       const items = await api.listMessages(id);
       const loaded: ChatMessage[] = items.map((item) => ({
@@ -330,6 +365,23 @@ export default function ChatPage() {
   useEffect(() => {
     let cancelled = false;
     api
+      .listDocuments()
+      .then(({ items }) => {
+        if (!cancelled) {
+          setDocuments(items.filter((item) => item.status === "ready"));
+        }
+      })
+      .catch(() => {
+        // The composer still works without the @ picker.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
       .listModels()
       .then(({ items, default: defaultModel }) => {
         if (cancelled) return;
@@ -371,12 +423,18 @@ export default function ChatPage() {
     setInput("");
     setError(null);
     setStatusDetail("");
+    setStatusUpdate({});
     setStreaming(true);
     addUserMessage(query);
 
     const assistantId = beginAssistantMessage();
     const collectedSources: SourceReference[] = [];
     abortRef.current = new AbortController();
+    const taggedDocs = documents.filter(
+      (doc) =>
+        mentionedDocs.some((selected) => selected.id === doc.id) ||
+        query.includes(`@${doc.filename}`)
+    );
 
     try {
       await streamChat(
@@ -385,6 +443,9 @@ export default function ChatPage() {
           query,
           model: model || undefined,
           web_search: webSearch,
+          document_ids: taggedDocs.length
+            ? taggedDocs.map((doc) => doc.id)
+            : undefined,
         },
         (event: StreamEvent) => {
           switch (event.event) {
@@ -394,6 +455,7 @@ export default function ChatPage() {
                 update?: Record<string, unknown>;
               };
               if (payload.node) setStatus(payload.node);
+              setStatusUpdate(payload.update ?? {});
               setStatusDetail(describeStatus(payload));
               break;
             }
@@ -428,7 +490,82 @@ export default function ChatPage() {
     }
   }
 
+  function mentionMatches(): DocumentItem[] {
+    const query = mentionQuery.toLowerCase();
+    return documents
+      .filter(
+        (doc) =>
+          !mentionedDocs.some((selected) => selected.id === doc.id) &&
+          doc.filename.toLowerCase().includes(query)
+      )
+      .slice(0, 8);
+  }
+
+  function onInputChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
+    const value = event.target.value;
+    setInput(value);
+    const caret = event.target.selectionStart ?? value.length;
+    const match = value.slice(0, caret).match(/@([^@\s]*)$/);
+    if (!match) {
+      setMentionOpen(false);
+      return;
+    }
+    setMentionQuery(match[1]);
+    setMentionStart(caret - match[0].length);
+    setMentionIndex(0);
+    setMentionOpen(true);
+  }
+
+  function selectMention(doc: DocumentItem) {
+    const caret = inputRef.current?.selectionStart ?? input.length;
+    const token = `@${doc.filename} `;
+    const next = input.slice(0, mentionStart) + token + input.slice(caret);
+    setInput(next);
+    setMentionedDocs((current) =>
+      current.some((item) => item.id === doc.id) ? current : [...current, doc]
+    );
+    setMentionOpen(false);
+    setMentionQuery("");
+    window.setTimeout(() => {
+      const field = inputRef.current;
+      if (!field) return;
+      const position = mentionStart + token.length;
+      field.focus();
+      field.setSelectionRange(position, position);
+    }, 0);
+  }
+
+  function removeMention(doc: DocumentItem) {
+    setMentionedDocs((current) => current.filter((item) => item.id !== doc.id));
+    const token = `@${doc.filename}`;
+    setInput((current) =>
+      current.replace(`${token} `, "").replace(token, "").trimStart()
+    );
+  }
+
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionOpen) {
+      const matches = mentionMatches();
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setMentionIndex((index) => Math.min(index + 1, matches.length - 1));
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setMentionIndex((index) => Math.max(index - 1, 0));
+        return;
+      }
+      if ((event.key === "Enter" || event.key === "Tab") && matches[mentionIndex]) {
+        event.preventDefault();
+        selectMention(matches[mentionIndex]);
+        return;
+      }
+      if (event.key === "Escape") {
+        setMentionOpen(false);
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void send();
@@ -450,6 +587,9 @@ export default function ChatPage() {
     setInput("");
     setError(null);
     setConversationId(null);
+    setMentionedDocs([]);
+    setMentionOpen(false);
+    setStatusUpdate({});
     conversationPromiseRef.current = null;
     startConversation();
     window.setTimeout(() => inputRef.current?.focus(), 0);
@@ -457,6 +597,23 @@ export default function ChatPage() {
 
   const composer = (
     <div className="composer-wrap">
+      {mentionedDocs.length > 0 && (
+        <div className="mention-chips">
+          <span className="mention-label">Đang hỏi trong:</span>
+          {mentionedDocs.map((doc) => (
+            <span key={doc.id} className="mention-chip">
+              {doc.filename}
+              <button
+                type="button"
+                onClick={() => removeMention(doc)}
+                aria-label={`Bỏ ${doc.filename}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="composer-meta">
         <span>
           <SparkIcon size={13} /> Trợ lý RAG nội bộ
@@ -486,13 +643,33 @@ export default function ChatPage() {
             id="chat-input"
             ref={inputRef}
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={onInputChange}
             onKeyDown={onKeyDown}
-            placeholder="Hỏi về tài liệu của bạn…"
+            placeholder="Hỏi về tài liệu của bạn… gõ @ để chọn file"
             rows={1}
             disabled={isStreaming}
             aria-label="Câu hỏi"
           />
+          {mentionOpen && mentionMatches().length > 0 && (
+            <div className="mention-menu" role="listbox" aria-label="Chọn tài liệu">
+              {mentionMatches().map((doc, index) => (
+                <button
+                  key={doc.id}
+                  type="button"
+                  role="option"
+                  aria-selected={index === mentionIndex}
+                  className={index === mentionIndex ? "active" : ""}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    selectMention(doc);
+                  }}
+                >
+                  <span>{doc.filename}</span>
+                  <small>{doc.file_type.toUpperCase()}</small>
+                </button>
+              ))}
+            </div>
+          )}
           <button
             type="submit"
             className="send-button"
@@ -646,9 +823,7 @@ export default function ChatPage() {
                   ) : message.streaming && isStreaming ? (
                     <span className="status-line">
                       <span className="status-dot" />
-                      {statusNode
-                        ? (STATUS_LABELS[statusNode] ?? statusNode)
-                        : "Đang suy nghĩ…"}
+                      {statusTitle(statusNode, statusUpdate)}
                       {statusDetail && (
                         <span className="status-detail">{statusDetail}</span>
                       )}
