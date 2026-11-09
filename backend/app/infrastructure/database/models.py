@@ -13,6 +13,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -86,6 +87,28 @@ class MembershipRecord(Base):
 # ---------------------------------------------------------------------------
 
 
+class DocumentDomainRecord(Base, TenantMixin):
+    """Tenant-scoped custom document domain."""
+
+    __tablename__ = "document_domains"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    slug: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    hints: Mapped[list] = mapped_column(JSONB, default=list)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "slug", name="uq_document_domains_tenant_slug"),
+    )
+
+
 class DocumentRecord(Base, TenantMixin):
     __tablename__ = "documents"
 
@@ -116,6 +139,12 @@ class DocumentRecord(Base, TenantMixin):
 
     status: Mapped[str] = mapped_column(String(24), default="uploaded")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Document domain: broad subject area, selected by the user or detected
+    # during ingestion/classification.
+    domain: Mapped[str] = mapped_column(String(64), default="general")
+    domain_source: Mapped[str] = mapped_column(String(16), default="fallback")
+    domain_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     quality_report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     run_metadata: Mapped[dict] = mapped_column(JSONB, default=dict)

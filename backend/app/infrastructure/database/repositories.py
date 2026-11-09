@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal
@@ -24,6 +24,7 @@ from app.domain.documents.entities import DocumentStatus
 from app.infrastructure.database.models import (
     AgentRunRecord,
     ConversationRecord,
+    DocumentDomainRecord,
     DocumentRecord,
     MembershipRecord,
     MessageRecord,
@@ -217,6 +218,73 @@ class DocumentRepository:
             record.quality_report = quality_report
         if run_metadata is not None:
             record.run_metadata = run_metadata
+        await self.session.commit()
+
+
+# ---- document domains: built-ins are global, customs are per tenant ----------------------
+class DocumentDomainRepository:
+    def __init__(self, session: AsyncSession, principal: Principal):
+        self.session = session
+        self.principal = principal
+
+    def _tenant(self):
+        return DocumentDomainRecord.tenant_id == str(self.principal.tenant_id)
+
+    async def list_custom(self) -> list[DocumentDomainRecord]:
+        stmt = (
+            select(DocumentDomainRecord)
+            .where(self._tenant())
+            .order_by(
+                DocumentDomainRecord.created_at.asc(),
+                DocumentDomainRecord.slug.asc(),
+            )
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_custom(self, slug: str) -> DocumentDomainRecord | None:
+        stmt = select(DocumentDomainRecord).where(
+            self._tenant(),
+            DocumentDomainRecord.slug == slug,
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def count_custom(self) -> int:
+        stmt = select(func.count()).select_from(DocumentDomainRecord).where(
+            self._tenant()
+        )
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one())
+
+    async def add(self, record: DocumentDomainRecord) -> DocumentDomainRecord:
+        record.tenant_id = str(self.principal.tenant_id)
+        record.created_by = self.principal.user_id
+        self.session.add(record)
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
+    async def save(self, record: DocumentDomainRecord) -> DocumentDomainRecord:
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
+    async def delete(self, record: DocumentDomainRecord) -> None:
+        # Deleting a domain must not leave documents pointing at a ghost slug.
+        await self.session.execute(
+            update(DocumentRecord)
+            .where(
+                DocumentRecord.tenant_id == str(self.principal.tenant_id),
+                DocumentRecord.domain == record.slug,
+            )
+            .values(
+                domain="general",
+                domain_source="fallback",
+                domain_confidence=None,
+            )
+        )
+        await self.session.delete(record)
         await self.session.commit()
 
 

@@ -40,6 +40,9 @@ class DocumentService:
         filename: str,
         content_type: str,
         data: bytes,
+        domain: str | None = None,
+        domain_source: str | None = None,
+        domain_confidence: float | None = None,
     ) -> DocumentRecord:
         if scope not in ("org", "personal"):
             raise ValueError("scope")
@@ -70,6 +73,13 @@ class DocumentService:
             file_type=file_type,
             status=DocumentStatus.UPLOADED.value,
         )
+        # Only override the model defaults when the caller supplied a domain.
+        if domain is not None:
+            record.domain = domain
+        if domain_source is not None:
+            record.domain_source = domain_source
+        if domain_confidence is not None:
+            record.domain_confidence = domain_confidence
         # add() re-asserts tenant/user from the Principal (defence in depth)
         await self.repository.add(record)
 

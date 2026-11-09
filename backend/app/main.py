@@ -7,6 +7,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+try:  # FastAPI >= 0.162 keeps included routers lazy.
+    from fastapi.routing import RouteContext, _IncludedRouter
+except ImportError:  # older FastAPI exposes included routes directly
+    RouteContext = None  # type: ignore[assignment]
+    _IncludedRouter = ()  # type: ignore[assignment,misc]
+
 from app.api.v1.router import api_router
 from app.auth import (
     ActiveChecker,
@@ -40,6 +46,27 @@ async def _db_is_active(principal: Principal) -> bool:
         return await is_member_active(session, principal)
 
 
+class _FlatRoutesFastAPI(FastAPI):
+    """Expose included routers as flattened routes.
+
+    FastAPI 0.162 keeps ``include_router`` lazy, so ``app.router.routes``
+    only contains an ``_IncludedRouter`` placeholder. Route introspection
+    (and the public ``app.routes`` contract) expects the effective paths.
+    Routing itself still uses ``app.router.routes``.
+    """
+
+    @property
+    def routes(self):
+        flat = []
+        for route in self.router.routes:
+            if isinstance(route, _IncludedRouter):
+                for context in route.effective_route_contexts():
+                    flat.append(RouteContext(context.original_route, context))
+            else:
+                flat.append(route)
+        return flat
+
+
 def create_app(
     *,
     auth: AuthSettings | None = None,
@@ -60,7 +87,7 @@ def create_app(
     if disabled and settings.app_env != "development":
         raise RuntimeError("AUTH_DISABLED is only allowed when APP_ENV=development")
 
-    app = FastAPI(
+    app = _FlatRoutesFastAPI(
         title="Agentic RAG API",
         version="0.1.0",
         description="Adaptive Document Intelligence & Question Answering System",
