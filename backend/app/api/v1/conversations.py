@@ -12,9 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, get_principal
+from app.config import settings
 from app.infrastructure.database.models import MessageRecord
 from app.infrastructure.database.repositories import ConversationRepository
 from app.infrastructure.database.session import get_session
+from app.infrastructure.llm import get_llm_client
+from app.services.title_service import generate_title
 
 router = APIRouter()
 
@@ -36,9 +39,16 @@ class ConversationRename(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
 
+class AutoTitleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 class ConversationResponse(BaseModel):
     id: UUID
     title: str
+    title_source: str = "first_message"
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -47,6 +57,7 @@ class ConversationResponse(BaseModel):
         return cls(
             id=record.id,
             title=record.title,
+            title_source=getattr(record, "title_source", "first_message"),
             created_at=record.created_at.isoformat() if record.created_at else None,
             updated_at=record.updated_at.isoformat() if record.updated_at else None,
         )
@@ -128,6 +139,55 @@ async def rename_conversation(
     if record is None:
         raise not_found()
     return ConversationResponse.from_record(record)
+
+
+@router.post("/{conversation_id}/auto-title", response_model=ConversationResponse)
+async def auto_title_conversation(
+    conversation_id: UUID,
+    body: AutoTitleRequest,
+    repo: ConversationRepository = Depends(_repo),
+) -> ConversationResponse:
+    record = await repo.get(conversation_id)
+    if record is None:
+        raise not_found()
+    # A manual rename always wins; an auto title is generated only once.
+    if record.title_source in {"manual", "auto"}:
+        return ConversationResponse.from_record(record)
+
+    messages = await repo.messages(conversation_id) or []
+    first_query = next(
+        (message.content for message in messages if message.role == "user"),
+        None,
+    )
+    if not first_query:
+        return ConversationResponse.from_record(record)
+
+    option = next(
+        (item for item in settings.available_models() if item.id == body.model),
+        settings.default_model_option(),
+    )
+    if body.model is not None and option.id != body.model:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported model")
+    try:
+        llm = get_llm_client(option.provider, model=option.id, thinking=False)
+        title = await generate_title(llm, first_query[:4000], model=option.id)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - title failure must not break chat
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, f"Title generation failed: {exc}"
+        ) from exc
+    if not title:
+        return ConversationResponse.from_record(record)
+    updated = await repo.set_title(
+        conversation_id,
+        title,
+        source="auto",
+        only_if_source="first_message",
+    )
+    return ConversationResponse.from_record(updated or record)
 
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageResponse])

@@ -120,6 +120,12 @@ export const api = {
   deleteConversation: (id: string) =>
     request<void>(`/conversations/${id}`, { method: "DELETE" }),
 
+  autoTitleConversation: (id: string, model?: string) =>
+    request<ConversationItem>(`/conversations/${id}/auto-title`, {
+      method: "POST",
+      body: JSON.stringify({ model: model || null }),
+    }),
+
   listMessages: (conversationId: string) =>
     request<
       Array<{

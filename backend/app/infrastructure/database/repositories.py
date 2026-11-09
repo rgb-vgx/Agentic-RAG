@@ -259,6 +259,26 @@ class ConversationRepository:
         if record is None:
             return None
         record.title = title
+        record.title_source = "manual"
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
+    async def set_title(
+        self,
+        conversation_id: UUID,
+        title: str,
+        *,
+        source: str,
+        only_if_source: str | None = None,
+    ) -> ConversationRecord | None:
+        record = await self.get(conversation_id)
+        if record is None:
+            return None
+        if only_if_source is not None and record.title_source != only_if_source:
+            return record
+        record.title = title
+        record.title_source = source
         await self.session.commit()
         await self.session.refresh(record)
         return record
@@ -314,6 +334,7 @@ class ConversationRepository:
             )
             if existing.first() is None:
                 conv.title = " ".join(content.split())[:80] or conv.title
+                conv.title_source = "first_message"
         record = MessageRecord(
             conversation_id=conv.id,
             tenant_id=conv.tenant_id,

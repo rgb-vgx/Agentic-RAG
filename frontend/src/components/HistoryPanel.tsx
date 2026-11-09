@@ -10,7 +10,7 @@
  */
 
 import { useState } from "react";
-import type { ConversationItem } from "@/lib/types";
+import type { ConversationItem, ModelOption } from "@/lib/types";
 import { PlusIcon } from "@/components/icons";
 
 interface HistoryPanelProps {
@@ -23,6 +23,11 @@ interface HistoryPanelProps {
   onCreate: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  autoTitle: boolean;
+  onAutoTitleChange: (enabled: boolean) => void;
+  titleModel: string;
+  onTitleModelChange: (model: string) => void;
+  models: ModelOption[];
 }
 
 function conversationTitle(conversation: ConversationItem): string {
@@ -57,6 +62,11 @@ export default function HistoryPanel({
   onCreate,
   onRename,
   onDelete,
+  autoTitle,
+  onAutoTitleChange,
+  titleModel,
+  onTitleModelChange,
+  models,
 }: HistoryPanelProps) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
@@ -212,6 +222,30 @@ export default function HistoryPanel({
                 </div>
               );
             })
+          )}
+        </div>
+
+        <div className="history-settings">
+          <label className="history-setting-toggle">
+            <input
+              type="checkbox"
+              checked={autoTitle}
+              onChange={(event) => onAutoTitleChange(event.target.checked)}
+            />
+            <span>Tự đặt tên bằng AI</span>
+          </label>
+          {autoTitle && models.length > 0 && (
+            <select
+              value={titleModel || models[0]?.id || ""}
+              onChange={(event) => onTitleModelChange(event.target.value)}
+              aria-label="Model đặt tên hội thoại"
+            >
+              {models.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           )}
         </div>
       </aside>

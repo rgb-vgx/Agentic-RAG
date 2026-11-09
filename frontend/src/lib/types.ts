@@ -38,6 +38,7 @@ export interface ChunkItem {
 export interface ConversationItem {
   id: string;
   title: string;
+  title_source?: string;
   created_at?: string | null;
   updated_at?: string | null;
 }

@@ -16,7 +16,14 @@ from app.infrastructure.llm.base import (
 class AnthropicClient(BaseLLMClient):
     provider = "anthropic"
 
-    def __init__(self, api_key: str | None = None, default_model: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        default_model: str | None = None,
+        *,
+        thinking: bool = True,
+    ):
+        self._thinking_type = settings.anthropic_thinking_type if thinking else None
         key = api_key or settings.anthropic_api_key
         token = settings.anthropic_auth_token
         if not key and not token and not settings.anthropic_base_url:
@@ -34,18 +41,19 @@ class AnthropicClient(BaseLLMClient):
         self._client = AsyncAnthropic(**kwargs)
         self._default_model = default_model or settings.anthropic_chat_model
 
-    @staticmethod
-    def _extra_body(temperature: float) -> dict:
+    def _extra_body(self, temperature: float) -> dict:
         """Fields the SDK 2.x signature no longer exposes.
 
         `temperature` was removed from the typed params (and `stream`) but is
         still accepted by the Messages API; thinking/effort are proxy-specific.
+        Short utility calls (titles) disable thinking explicitly, otherwise a
+        reasoning model spends the whole token budget before emitting text.
         """
         body: dict = {"temperature": temperature}
-        if settings.anthropic_thinking_type:
-            body["thinking"] = {"type": settings.anthropic_thinking_type}
-        if settings.anthropic_output_effort:
-            body["output_config"] = {"effort": settings.anthropic_output_effort}
+        if self._thinking_type:
+            body["thinking"] = {"type": self._thinking_type}
+            if settings.anthropic_output_effort:
+                body["output_config"] = {"effort": settings.anthropic_output_effort}
         return body
 
     async def complete(

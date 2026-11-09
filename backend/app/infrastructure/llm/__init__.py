@@ -23,7 +23,10 @@ __all__ = [
 
 
 def get_llm_client(
-    provider: str | None = None, model: str | None = None
+    provider: str | None = None,
+    model: str | None = None,
+    *,
+    thinking: bool = True,
 ) -> BaseLLMClient:
     from app.config import settings
 
@@ -31,7 +34,7 @@ def get_llm_client(
     if name == "anthropic":
         from app.infrastructure.llm.anthropic_client import AnthropicClient
 
-        return AnthropicClient(default_model=model)
+        return AnthropicClient(default_model=model, thinking=thinking)
     if name == "openai":
         from app.infrastructure.llm.openai_client import OpenAIClient
 

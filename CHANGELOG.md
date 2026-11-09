@@ -322,6 +322,33 @@ và CORS cũng chỉ mở cho `localhost:3000`.
 
 ---
 
+### 8. Tự đặt tên hội thoại bằng model nhỏ
+
+**Nghiệp vụ.** Danh sách lịch sử cần tiêu đề ngắn, dễ nhận biết thay vì câu hỏi
+dài hoặc hàng loạt “New conversation”.
+
+**Thay đổi.**
+
+- Conversation có `title_source`: `first_message` (rút gọn câu hỏi đầu), `auto`
+  (LLM đặt tên), `manual` (user sửa tay). `manual` không bao giờ bị ghi đè.
+- Endpoint `POST /conversations/{id}/auto-title` gọi model allowlist với prompt
+  riêng, chỉ dùng câu hỏi đầu, giới hạn tiêu đề 80 ký tự; idempotent (chỉ chạy
+  khi `title_source=first_message`).
+- Backend tắt thinking cho lời gọi đặt tên; model reasoning vẫn tiêu tốn token
+  trước khi trả text nên ngân sách là 512 token.
+- Panel lịch sử có toggle “Tự đặt tên bằng AI” + chọn model, lưu localStorage;
+  FE gọi auto-title sau khi stream xong và refresh danh sách, lỗi thì giữ tiêu
+  đề cũ.
+
+**Kết quả.** “Nhiệm vụ của Bộ luật hình sự là gì?” → tiêu đề “Nhiệm vụ của Bộ
+luật hình sự” (`title_source=auto`). 105 unit test pass.
+
+**Ghi chú.** Với DeepSeek qua proxy hiện tại, một lời gọi đặt tên mất ~15–18 s
+dù chạy nền sau câu trả lời. Khi có model nhỏ hơn (Qwen 4B/Ollama), chỉ cần
+thêm vào allowlist và chọn trên FE.
+
+---
+
 ## 4ed8a7c — Embedding mặc định bge-m3, tắt sparse
 
 **Nghiệp vụ.** Chất lượng tìm kiếm quyết định chất lượng câu trả lời. Hệ thống

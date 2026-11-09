@@ -160,6 +160,8 @@ export default function ChatPage() {
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [autoTitle, setAutoTitle] = useState(true);
+  const [titleModel, setTitleModel] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -172,6 +174,30 @@ export default function ChatPage() {
       setConversations(sortConversations(items));
     } catch {
       // History is a convenience layer; a listing failure must not block chat.
+    }
+  }
+
+  function updateAutoTitle(enabled: boolean) {
+    setAutoTitle(enabled);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("rag.autoTitle", String(enabled));
+    }
+  }
+
+  function updateTitleModel(nextModel: string) {
+    setTitleModel(nextModel);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("rag.titleModel", nextModel);
+    }
+  }
+
+  async function maybeAutoTitle(id: string) {
+    if (!autoTitle) return;
+    try {
+      await api.autoTitleConversation(id, titleModel || model || undefined);
+      await refreshConversations();
+    } catch {
+      // Keep the first-message fallback; title generation is best-effort.
     }
   }
 
@@ -242,6 +268,12 @@ export default function ChatPage() {
   useEffect(() => {
     startConversation();
     void refreshConversations();
+    if (typeof window !== "undefined") {
+      const storedEnabled = window.localStorage.getItem("rag.autoTitle");
+      if (storedEnabled === "false") setAutoTitle(false);
+      const storedModel = window.localStorage.getItem("rag.titleModel");
+      if (storedModel) setTitleModel(storedModel);
+    }
     // Runs once on mount; the helpers only touch state and the API client.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -254,6 +286,7 @@ export default function ChatPage() {
         if (cancelled) return;
         setModels(items);
         setModel(defaultModel);
+        setTitleModel((current) => current || defaultModel);
       })
       .catch(() => {
         // The catalogue is behind auth; until Bearer wiring lands the
@@ -327,6 +360,7 @@ export default function ChatPage() {
       finishMessage(assistantId);
       abortRef.current = null;
       void refreshConversations();
+      void maybeAutoTitle(conversationId);
     }
   }
 
@@ -443,6 +477,11 @@ export default function ChatPage() {
         onCreate={newChat}
         onRename={(id, title) => void renameConversation(id, title)}
         onDelete={(id) => void removeConversation(id)}
+        autoTitle={autoTitle}
+        onAutoTitleChange={updateAutoTitle}
+        titleModel={titleModel}
+        onTitleModelChange={updateTitleModel}
+        models={models}
       />
 
       <header className="topbar">

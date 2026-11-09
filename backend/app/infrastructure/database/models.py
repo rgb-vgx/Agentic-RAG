@@ -163,6 +163,10 @@ class ConversationRecord(Base, TenantMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     knowledge_base_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     title: Mapped[str] = mapped_column(String(256), default="New conversation")
+    # first_message | auto | manual — manual titles are never overwritten.
+    title_source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="first_message"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()
     )
