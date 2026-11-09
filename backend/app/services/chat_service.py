@@ -18,6 +18,7 @@ from typing import Any
 
 from app.agentic_rag.graph.nodes import NodeContext
 from app.agentic_rag.graph.workflow import build_graph, initial_state, stream_run
+from app.agentic_rag.intents import Intent, detect_intent, direct_answer
 from app.agentic_rag.retrieval.tools import RerankTool
 from app.config import settings
 from app.domain.agents.state import WorkflowLimits
@@ -112,6 +113,40 @@ class ChatService:
         self.last_result = None
         self.last_error = None
         started = monotonic()
+
+        intent = detect_intent(user_query)
+        direct = intent.intent in {
+            Intent.SMALLTALK,
+            Intent.META,
+            Intent.DOCUMENT_LIST,
+        } or (intent.intent is Intent.OUT_OF_SCOPE and not web_evidence)
+        if direct:
+            answer = direct_answer(intent.intent, self.ctx.documents)
+            yield _sse(
+                "status",
+                {"node": "intent", "update": {"intent": intent.intent.value}},
+            )
+            for index in range(0, len(answer), 40):
+                yield _sse("token", {"delta": answer[index : index + 40]})
+            result = ChatRunResult(
+                answer=answer,
+                citations=[],
+                routing_path="direct",
+                iterations=0,
+                latency_ms=int((monotonic() - started) * 1000),
+            )
+            self.last_result = result
+            yield _sse(
+                "completed",
+                {
+                    "run_id": run_id,
+                    "routing_path": "direct",
+                    "iterations": 0,
+                    "citations": 0,
+                    "latency_ms": result.latency_ms,
+                },
+            )
+            return
 
         state = initial_state(
             run_id=run_id,

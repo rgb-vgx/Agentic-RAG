@@ -34,6 +34,7 @@ import HistoryPanel from "@/components/HistoryPanel";
 import Robot from "@/components/Robot";
 
 const STATUS_LABELS: Record<string, string> = {
+  intent: "Đang nhận diện câu hỏi…",
   resolve_context: "Đang đọc ngữ cảnh hội thoại…",
   analyze: "Đang phân tích câu hỏi…",
   route: "Đang chọn cách truy xuất…",
