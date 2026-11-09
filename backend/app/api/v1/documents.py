@@ -18,6 +18,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     Response,
     UploadFile,
     status,
@@ -26,13 +27,21 @@ from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.domains import available_domains
 from app.auth import Principal, get_principal, require_role
 from app.config import settings
+from app.domain.documents.domains import normalize_domain_slug
 from app.domain.documents.entities import DocumentStatus
 from app.infrastructure.database.models import DocumentRecord
 from app.infrastructure.database.repositories import DocumentRepository
 from app.infrastructure.database.session import get_session
 from app.infrastructure.storage.s3 import ObjectStorage
+from app.ingestion.domain_classifier import (
+    classify_by_rules,
+    classify_with_llm,
+    extract_text_sample,
+    rank_by_rules,
+)
 from app.services.document_service import DocumentService
 
 router = APIRouter()
@@ -75,6 +84,9 @@ class DocumentResponse(BaseModel):
     active: bool
     error_message: str | None = None
     quality_summary: dict | None = None
+    domain: str = "general"
+    domain_source: str = "fallback"
+    domain_confidence: float | None = None
 
     @classmethod
     def from_record(cls, record: DocumentRecord, principal: Principal) -> "DocumentResponse":
@@ -97,6 +109,9 @@ class DocumentResponse(BaseModel):
             active=record.active_chunk_set_id is not None,
             error_message=record.error_message,
             quality_summary=quality,
+            domain=getattr(record, "domain", None) or "general",
+            domain_source=getattr(record, "domain_source", None) or "fallback",
+            domain_confidence=getattr(record, "domain_confidence", None),
         )
 
 
@@ -137,12 +152,46 @@ def _service(
     )
 
 
+def _llm_configured() -> bool:
+    provider = settings.llm_provider.lower()
+    if provider == "anthropic":
+        return bool(
+            settings.anthropic_api_key
+            or settings.anthropic_auth_token
+            or settings.anthropic_base_url
+        )
+    return bool(settings.openai_api_key or settings.openai_base_url)
+
+
+def _classifier_llm(request: Request):
+    """Resolve an LLM for classification, or None when none is configured."""
+    factory = getattr(request.app.state, "domain_llm_factory", None)
+    if factory is not None:
+        try:
+            return factory() if callable(factory) else factory
+        except Exception:  # noqa: BLE001 - preview must fall back to rules
+            logger.warning("domain classifier LLM factory failed", exc_info=True)
+            return None
+    if not _llm_configured():
+        return None
+    try:
+        from app.infrastructure.llm import get_llm_client
+
+        option = settings.default_model_option()
+        return get_llm_client(option.provider, model=option.id, thinking=False)
+    except Exception:  # noqa: BLE001 - preview must fall back to rules
+        logger.warning("domain classifier LLM unavailable", exc_info=True)
+        return None
+
+
 @router.post("", response_model=DocumentResponse, status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
     scope: Literal["org", "personal"] = Form(...),   # required, no default
     knowledge_base_id: str = Form("default"),
+    domain: str | None = Form(None),
     service: DocumentService = Depends(_service),
+    session: AsyncSession = Depends(get_session),
 ) -> DocumentResponse:
     """Upload a document and enqueue it for asynchronous ingestion.
 
@@ -152,6 +201,16 @@ async def upload_document(
     """
     from app.ingestion.upload_validation import UploadValidationError
 
+    selected_domain: str | None = None
+    if domain is not None and domain.strip():
+        selected_domain = normalize_domain_slug(domain)
+        options = await available_domains(session, service.principal)
+        if selected_domain not in {item.slug for item in options}:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Unknown document domain",
+            )
+
     data = await file.read()
     try:
         record = await service.upload(
@@ -160,6 +219,9 @@ async def upload_document(
             filename=file.filename or "",
             content_type=file.content_type or "application/octet-stream",
             data=data,
+            domain=selected_domain,
+            domain_source="user" if selected_domain else None,
+            domain_confidence=1.0 if selected_domain else None,
         )
     except UploadValidationError as exc:
         logger.warning(
@@ -189,6 +251,71 @@ async def list_documents(
         items=[DocumentResponse.from_record(r, principal) for r in records],
         total=len(records),
     )
+
+
+@router.post("/classify")
+async def classify_document(
+    request: Request,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    """Preview the domain of an upload without creating a document.
+
+    Rules always run first; a configured LLM may refine the answer. Any LLM
+    failure or timeout silently falls back to the rule/fallback suggestion.
+    """
+    data = await file.read()
+    filename = file.filename or ""
+    try:
+        sample = await asyncio.to_thread(extract_text_sample, filename, data)
+    except Exception:  # noqa: BLE001 - malformed file still gets filename rules
+        logger.warning(
+            "could not extract sample for domain classification", exc_info=True
+        )
+        sample = ""
+
+    rule = classify_by_rules(filename, sample)
+    options = await available_domains(session, principal)
+    labels = {item.slug: item.label for item in options}
+
+    final = rule
+    llm = _classifier_llm(request)
+    if llm is not None:
+        try:
+            suggestion = await asyncio.wait_for(
+                classify_with_llm(llm, filename, sample, options),
+                timeout=20,
+            )
+            if suggestion.source == "auto_llm" and suggestion.domain in labels:
+                final = suggestion
+        except Exception:  # noqa: BLE001 - classifier cannot fail the preview
+            logger.warning(
+                "domain classifier LLM failed; using rules", exc_info=True
+            )
+
+    alternatives = []
+    for suggestion in rank_by_rules(filename, sample):
+        if suggestion.domain == final.domain:
+            continue
+        alternatives.append(
+            {
+                "domain": suggestion.domain,
+                "label": labels.get(suggestion.domain, suggestion.domain),
+                "confidence": suggestion.confidence,
+            }
+        )
+        if len(alternatives) >= 3:
+            break
+
+    return {
+        "domain": final.domain,
+        "label": labels.get(final.domain, labels.get("general", "Tổng hợp")),
+        "confidence": final.confidence,
+        "source": final.source,
+        "reason": final.reason,
+        "alternatives": alternatives,
+    }
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
