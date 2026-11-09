@@ -20,7 +20,8 @@ export default function Sidebar() {
 
       <nav className="rail-nav">
         {NAV.map(({ href, label, Icon }) => {
-          const active = pathname === href || pathname.startsWith(`${href}/`);
+          const active =
+            pathname === href || (pathname?.startsWith(`${href}/`) ?? false);
           return (
             <Link
               key={href}
