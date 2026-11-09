@@ -57,6 +57,16 @@ class CitationValidator:
         user_query: str = "",
         min_supported_ratio: float = 0.4,
     ) -> CitationValidationResult:
+        # Models sometimes group markers as "[R1, R2]"; split them into
+        # canonical adjacent markers before the rest of the pipeline.
+        answer = re.sub(
+            r"\[(R\d+(?:\s*,\s*R\d+)*)\]",
+            lambda match: "".join(
+                f"[{ref}]" for ref in re.findall(r"R\d+", match.group(1))
+            ),
+            answer,
+        )
+
         # --- Immutable registry from the final evidence pack -------------
         registry: dict[str, RetrievedEvidence] = {}
         for group in evidence_groups:
@@ -88,11 +98,11 @@ class CitationValidator:
         lost_ratio = dropped_chars / total_claim_chars
 
         fallback = False
-        if registry:
-            if not _CITATION_RE.search(cleaned):
-                fallback = True
-            elif lost_ratio > (1.0 - min_supported_ratio):
-                fallback = True
+        if registry and (
+            not _CITATION_RE.search(cleaned)
+            or lost_ratio > (1.0 - min_supported_ratio)
+        ):
+            fallback = True
 
         if fallback:
             cleaned = _fallback_message(user_query)
@@ -166,7 +176,11 @@ def _drop_uncited_claims(answer: str) -> tuple[str, list[str]]:
 
 def _fallback_message(user_query: str) -> str:
     """Match the query language (Vietnamese has diacritics)."""
-    if re.search(r"[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]", user_query.lower()):
+    vietnamese = (
+        r"[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộ"
+        r"ơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]"
+    )
+    if re.search(vietnamese, user_query.lower()):
         return _FALLBACK_VI
     return _FALLBACK_EN
 

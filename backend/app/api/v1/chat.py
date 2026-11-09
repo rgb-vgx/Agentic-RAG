@@ -24,6 +24,7 @@ create the run/message, and one to persist the result. No session is held
 open for the lifetime of the SSE response.
 """
 
+import asyncio
 import json
 import logging
 from typing import Annotated
@@ -46,6 +47,22 @@ from app.services.chat_service import ChatRunResult, ChatService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Keep finalization tasks alive after a client disconnect. A task stored only
+# in the cancelled request's frame can be garbage-collected before it writes.
+_persist_tasks: set[asyncio.Task] = set()
+
+
+def _track_persist(task: asyncio.Task) -> None:
+    _persist_tasks.add(task)
+    task.add_done_callback(_persist_tasks.discard)
+    task.add_done_callback(
+        lambda done: (
+            logger.exception("failed to finalize chat run", exc_info=done.exception())
+            if not done.cancelled() and done.exception()
+            else None
+        )
+    )
 
 
 def not_found() -> HTTPException:
@@ -211,13 +228,24 @@ async def chat(
                 yield event
         finally:
             if not finalized:
-                try:
-                    await persist(
+                # Shield the write: on a client/Cloudflare disconnect this
+                # generator is already being cancelled, and an unshielded
+                # await would be cancelled before the run leaves "running".
+                task = asyncio.create_task(
+                    persist(
                         outcome="failed",
                         result=None,
                         error=service.last_error or "client disconnected",
                     )
-                except Exception:
-                    logger.exception("failed to finalize chat run %s", run_id)
+                )
+                _track_persist(task)
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    logger.warning(
+                        "chat client disconnected; finalizing run %s in background",
+                        run_id,
+                    )
+                    raise
 
     return EventSourceResponse(event_stream())

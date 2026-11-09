@@ -173,7 +173,7 @@ class Settings(BaseSettings):
 
     # Agent limits
     agent_max_retrieval_iterations: int = 3
-    agent_max_decomposition_tasks: int = 5
+    agent_max_decomposition_tasks: int = 3
     # Evidence chunks passed to synthesis per retrieval task. Ollama runs
     # qwen3.5:9b with a 4096-token context; 20 chunks overflow it and the
     # prompt is truncated from the start (losing the system prompt and the

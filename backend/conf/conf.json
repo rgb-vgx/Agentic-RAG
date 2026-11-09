@@ -59,6 +59,6 @@
   "langfuse_host": "http://localhost:3001",
 
   "agent_max_retrieval_iterations": 3,
-  "agent_max_decomposition_tasks": 5,
+  "agent_max_decomposition_tasks": 3,
   "synthesis_max_evidence_per_group": 8
 }

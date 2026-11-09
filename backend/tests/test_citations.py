@@ -55,6 +55,14 @@ def test_citations_deduped_in_source_order():
     assert [s.reference_id for s in result.sources] == ["R2", "R1"]
 
 
+def test_grouped_citation_markers_are_split():
+    answer = "Leave is 12 days [R1, R2]."
+    result = CitationValidator().validate(answer, [make_group("R1", "R2")])
+    assert result.fallback is False
+    assert "R1, R2" not in result.answer
+    assert [s.reference_id for s in result.sources] == ["R1", "R2"]
+
+
 # ---------------------------------------------------------------------------
 # Claim support — stripping a marker must not leave the claim standing
 # ---------------------------------------------------------------------------

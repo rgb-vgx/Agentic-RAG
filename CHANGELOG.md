@@ -349,6 +349,41 @@ thêm vào allowlist và chọn trên FE.
 
 ---
 
+### 9. Tiến trình chat, chống timeout và giảm latency
+
+**Nghiệp vụ.** Câu hỏi rộng có thể chạy >100 s; Cloudflare/browser cắt kết nối,
+người dùng thấy “không trả lời được” dù backend vẫn đang xử lý.
+
+**Nguyên nhân.**
+
+- Planner tạo tới 5 sub-query, mỗi query rerank 50 ứng viên và có context
+  expansion → 130 s.
+- SSE im lặng trong lúc synthesis; Cloudflare cắt idle connection.
+- Khi client disconnect, `finally` await persist bị cancel theo task → run kẹt
+  `running` mãi.
+
+**Thay đổi.**
+
+- ChatService phát heartbeat `status` mỗi 10 s (`node=working`, elapsed,
+  last_node) để giữ SSE sống và FE hiện tiến trình.
+- Persist khi disconnect chạy trong task nền được shield, đánh dấu run `failed`
+  với “client disconnected”; không còn run treo.
+- FE hiển thị thêm chi tiết: node trước, số giây, số sub-query, số evidence.
+- Planner giữ 1 task cho `simple_fact`; cấu hình giảm
+  `agent_max_decomposition_tasks` từ 5 → 3.
+- Citation validator chấp nhận marker gộp `[R1, R2]` và tách thành `[R1][R2]`;
+  synthesis retry một lần nếu model quên toàn bộ citation.
+
+**Kết quả.**
+
+- Câu hỏi “người tham gia tố tụng…” trước 133 s và fallback, sau **76 s** và trả
+  lời có citation; 5 heartbeat trong lúc xử lý.
+- Client ngắt sau 5 s → run được ghi `failed / client disconnected` thay vì
+  `running`.
+- 106 unit test pass.
+
+---
+
 ## 4ed8a7c — Embedding mặc định bge-m3, tắt sparse
 
 **Nghiệp vụ.** Chất lượng tìm kiếm quyết định chất lượng câu trả lời. Hệ thống

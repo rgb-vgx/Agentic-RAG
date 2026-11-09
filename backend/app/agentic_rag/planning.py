@@ -107,13 +107,15 @@ class RetrievalPlanner:
     async def plan(
         self, resolved: ResolvedQuery, analysis: QueryAnalysis
     ) -> RetrievalPlan:
-        # Fast/standard paths don't need an LLM plan
-        if analysis.complexity == "low":
+        # Fast/standard paths don't need an LLM plan. Simple factual questions
+        # also stay on one retrieval task: decomposing them into 3 sub-queries
+        # triples rerank latency for no recall gain.
+        if analysis.complexity == "low" or analysis.query_type == "simple_fact":
             return RetrievalPlan(
                 query_type=analysis.query_type,
-                complexity="low",
+                complexity=analysis.complexity,
                 retrieval_tasks=[_task("t1", resolved.standalone_query)],
-                requires_reranking=False,
+                requires_reranking=analysis.complexity != "low",
                 max_iterations=1,
             )
 

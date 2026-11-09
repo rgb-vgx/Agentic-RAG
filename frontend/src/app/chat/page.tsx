@@ -42,7 +42,39 @@ const STATUS_LABELS: Record<string, string> = {
   evaluate: "Đang kiểm tra bằng chứng…",
   synthesize: "Đang viết câu trả lời…",
   validate_citations: "Đang kiểm chứng trích dẫn…",
+  working: "Đang xử lý…",
 };
+
+function describeStatus(data: {
+  node?: string;
+  update?: Record<string, unknown>;
+}): string {
+  const update = data.update ?? {};
+  const parts: string[] = [];
+  const lastNode = typeof update.last_node === "string" ? update.last_node : "";
+  if (lastNode && lastNode !== data.node) {
+    parts.push(STATUS_LABELS[lastNode] ?? lastNode);
+  }
+  const elapsed = update.elapsed_seconds;
+  if (typeof elapsed === "number") parts.push(`${elapsed}s`);
+  const plan = update.retrieval_plan as
+    | { retrieval_tasks?: unknown[] }
+    | undefined;
+  if (Array.isArray(plan?.retrieval_tasks)) {
+    parts.push(`${plan.retrieval_tasks.length} truy vấn`);
+  }
+  const groups = update.evidence_groups as
+    | Array<{ count?: number }>
+    | undefined;
+  if (Array.isArray(groups)) {
+    const count = groups.reduce(
+      (total, group) => total + (group.count ?? 0),
+      0
+    );
+    parts.push(`${count} bằng chứng`);
+  }
+  return parts.join(" · ");
+}
 
 const SUGGESTIONS = [
   {
@@ -162,6 +194,7 @@ export default function ChatPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [autoTitle, setAutoTitle] = useState(true);
   const [titleModel, setTitleModel] = useState("");
+  const [statusDetail, setStatusDetail] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -312,6 +345,7 @@ export default function ChatPage() {
 
     setInput("");
     setError(null);
+    setStatusDetail("");
     setStreaming(true);
     addUserMessage(query);
 
@@ -329,8 +363,12 @@ export default function ChatPage() {
         (event: StreamEvent) => {
           switch (event.event) {
             case "status": {
-              const node = (event.data as { node?: string }).node;
-              if (node) setStatus(node);
+              const payload = event.data as {
+                node?: string;
+                update?: Record<string, unknown>;
+              };
+              if (payload.node) setStatus(payload.node);
+              setStatusDetail(describeStatus(payload));
               break;
             }
             case "token":
@@ -573,6 +611,9 @@ export default function ChatPage() {
                       {statusNode
                         ? (STATUS_LABELS[statusNode] ?? statusNode)
                         : "Đang suy nghĩ…"}
+                      {statusDetail && (
+                        <span className="status-detail">{statusDetail}</span>
+                      )}
                     </span>
                   ) : null}
 

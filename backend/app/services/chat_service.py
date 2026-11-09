@@ -10,6 +10,7 @@ is used to build one `NodeContext` per request; every node shares that
 client, so OpenAI and Anthropic follow the same code path.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import monotonic
@@ -124,11 +125,40 @@ class ChatService:
 
         try:
             final_state: dict[str, Any] = {}
-            async for event, payload in stream_run(self.graph, state):
-                if event == "status":
-                    yield _sse("status", payload)
-                elif event == "done":
-                    final_state = payload
+            stream = stream_run(self.graph, state).__aiter__()
+            pending: asyncio.Task | None = asyncio.create_task(anext(stream))
+            last_node = "start"
+            try:
+                while pending is not None:
+                    done, _ = await asyncio.wait({pending}, timeout=10)
+                    if not done:
+                        # A silent synthesis can otherwise outlive Cloudflare's
+                        # idle timeout; a status heartbeat keeps the SSE open.
+                        yield _sse(
+                            "status",
+                            {
+                                "node": "working",
+                                "update": {
+                                    "last_node": last_node,
+                                    "elapsed_seconds": int(monotonic() - started),
+                                },
+                            },
+                        )
+                        continue
+                    try:
+                        event, payload = pending.result()
+                    except StopAsyncIteration:
+                        pending = None
+                        break
+                    pending = asyncio.create_task(anext(stream))
+                    if event == "status":
+                        last_node = payload.get("node", last_node)
+                        yield _sse("status", payload)
+                    elif event == "done":
+                        final_state = payload
+            finally:
+                if pending is not None and not pending.done():
+                    pending.cancel()
 
             answer = final_state.get("final_answer") or ""
             citations = list(final_state.get("citations") or [])

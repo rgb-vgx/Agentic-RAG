@@ -9,6 +9,8 @@ Node flow:
     evaluate → (loop | synthesize)] → validate_citations → persist
 """
 
+import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,7 +32,7 @@ from app.domain.retrieval.types import (
     RetrievalPlan,
     RetrievedEvidence,
 )
-from app.infrastructure.llm.base import BaseLLMClient
+from app.infrastructure.llm.base import BaseLLMClient, LLMMessage
 from app.infrastructure.observability.langfuse_tracer import trace_node
 from app.infrastructure.vectorstores.qdrant_store import HybridRetriever
 from app.ingestion.legal_metadata import (
@@ -41,6 +43,8 @@ from app.ingestion.legal_metadata import (
     resolve_document,
     resolve_document_from_context,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -401,7 +405,31 @@ async def synthesize_node(state: AgentState, ctx: NodeContext) -> dict:
         query = resolved.get("standalone_query", state.get("user_query", ""))
 
         answer = await ctx.synthesizer.synthesize(query, groups)
-        span["output"] = {"answer_chars": len(answer)}
+        repaired = False
+        if (
+            any(group.evidence for group in groups)
+            and not re.search(r"\[R\d+\]", answer)
+        ):
+            # A model occasionally ignores the citation rule. One strict retry
+            # is cheaper than returning the generic insufficiency fallback.
+            messages = ctx.synthesizer.build_messages(query, groups)
+            messages.append(
+                LLMMessage(
+                    role="user",
+                    content=(
+                        "Câu trả lời trước không có trích dẫn nên không dùng được. "
+                        "Hãy trả lời lại và gắn [R1], [R2]... vào từng câu khẳng "
+                        "định, chỉ dùng các mã có trong bằng chứng."
+                    ),
+                )
+            )
+            retry = await ctx.llm.complete(
+                messages, temperature=0.0, max_tokens=4096
+            )
+            if re.search(r"\[R\d+\]", retry.content):
+                answer = retry.content
+                repaired = True
+        span["output"] = {"answer_chars": len(answer), "citation_retry": repaired}
         return {"final_answer": answer}
 
 
@@ -424,6 +452,13 @@ async def validate_citations_node(state: AgentState, ctx: NodeContext) -> dict:
             groups,
             user_query=state.get("user_query", ""),
         )
+        if result.fallback:
+            logger.warning(
+                "citation validation fallback: dropped=%d invalid=%d query=%r",
+                len(result.dropped_claims),
+                len(result.invalid_references),
+                state.get("user_query", "")[:200],
+            )
         span["output"] = {
             "sources": len(result.sources),
             "invalid": result.invalid_references,
