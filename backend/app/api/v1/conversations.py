@@ -30,6 +30,12 @@ class ConversationCreate(BaseModel):
     title: str = Field(default="New conversation", min_length=1, max_length=200)
 
 
+class ConversationRename(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200)
+
+
 class ConversationResponse(BaseModel):
     id: UUID
     title: str
@@ -102,6 +108,23 @@ async def get_conversation(
     conversation_id: UUID, repo: ConversationRepository = Depends(_repo)
 ) -> ConversationResponse:
     record = await repo.get(conversation_id)
+    if record is None:
+        raise not_found()
+    return ConversationResponse.from_record(record)
+
+
+@router.patch("/{conversation_id}", response_model=ConversationResponse)
+async def rename_conversation(
+    conversation_id: UUID,
+    body: ConversationRename,
+    repo: ConversationRepository = Depends(_repo),
+) -> ConversationResponse:
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Title must not be blank"
+        )
+    record = await repo.rename(conversation_id, title)
     if record is None:
         raise not_found()
     return ConversationResponse.from_record(record)

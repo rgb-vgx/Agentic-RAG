@@ -252,6 +252,17 @@ class ConversationRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def rename(
+        self, conversation_id: UUID, title: str
+    ) -> ConversationRecord | None:
+        record = await self.get(conversation_id)
+        if record is None:
+            return None
+        record.title = title
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
     async def list(self, limit: int = 100) -> list[ConversationRecord]:
         stmt = (
             select(ConversationRecord)
@@ -292,6 +303,17 @@ class ConversationRepository:
         conv = await self.get(conversation_id)
         if conv is None:
             return None
+        if role == "user" and conv.title in {"New conversation", ""}:
+            existing = await self.session.execute(
+                select(MessageRecord.id)
+                .where(
+                    MessageRecord.conversation_id == conv.id,
+                    MessageRecord.role == "user",
+                )
+                .limit(1)
+            )
+            if existing.first() is None:
+                conv.title = " ".join(content.split())[:80] or conv.title
         record = MessageRecord(
             conversation_id=conv.id,
             tenant_id=conv.tenant_id,
