@@ -111,6 +111,15 @@ export const api = {
       body: JSON.stringify({ title }),
     }),
 
+  renameConversation: (id: string, title: string) =>
+    request<ConversationItem>(`/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+
+  deleteConversation: (id: string) =>
+    request<void>(`/conversations/${id}`, { method: "DELETE" }),
+
   listMessages: (conversationId: string) =>
     request<
       Array<{

@@ -9,11 +9,18 @@ import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 import { streamChat } from "@/lib/stream";
 import { useChatStore } from "@/store/chat";
-import type { ModelOption, StreamEvent, SourceReference } from "@/lib/types";
+import type {
+  ChatMessage,
+  ConversationItem,
+  ModelOption,
+  StreamEvent,
+  SourceReference,
+} from "@/lib/types";
 import {
   ArrowUpIcon,
   ChevronDownIcon,
   DocsIcon,
+  HistoryIcon,
   LayersIcon,
   PlusIcon,
   QuoteIcon,
@@ -23,6 +30,7 @@ import {
   SparklesIcon,
   UploadIcon,
 } from "@/components/icons";
+import HistoryPanel from "@/components/HistoryPanel";
 import Robot from "@/components/Robot";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -86,12 +94,54 @@ function citationify(text: string): string {
   return text.replace(/\[(R\d+)\]/g, "[$1](#ref-$1)");
 }
 
+/** Newest conversations first, falling back to creation time. */
+function sortConversations(items: ConversationItem[]): ConversationItem[] {
+  return [...items].sort((a, b) => {
+    const aTime = new Date(a.updated_at ?? a.created_at ?? 0).getTime();
+    const bTime = new Date(b.updated_at ?? b.created_at ?? 0).getTime();
+    return (Number.isNaN(bTime) ? 0 : bTime) - (Number.isNaN(aTime) ? 0 : aTime);
+  });
+}
+
+/** Stored sources are untyped JSON; keep only entries safe to render. */
+function normalizeSources(raw: unknown[]): SourceReference[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const source = entry as Partial<SourceReference>;
+    if (
+      typeof source.reference_id !== "string" ||
+      typeof source.chunk_id !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        reference_id: source.reference_id,
+        chunk_id: source.chunk_id,
+        document_id:
+          typeof source.document_id === "string" ? source.document_id : "",
+        page_start:
+          typeof source.page_start === "number" ? source.page_start : null,
+        page_end: typeof source.page_end === "number" ? source.page_end : null,
+        heading_path: Array.isArray(source.heading_path)
+          ? source.heading_path.filter(
+              (part): part is string => typeof part === "string"
+            )
+          : [],
+        snippet: typeof source.snippet === "string" ? source.snippet : "",
+      },
+    ];
+  });
+}
+
 export default function ChatPage() {
   const {
     messages,
     isStreaming,
     statusNode,
     error,
+    setMessages,
     addUserMessage,
     beginAssistantMessage,
     appendToken,
@@ -107,26 +157,92 @@ export default function ChatPage() {
   const [models, setModels] = useState<ModelOption[]>([]);
   const [model, setModel] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const hasConversation = messages.length > 0;
 
+  async function refreshConversations() {
+    try {
+      const { items } = await api.listConversations();
+      setConversations(sortConversations(items));
+    } catch {
+      // History is a convenience layer; a listing failure must not block chat.
+    }
+  }
+
   function startConversation() {
     api
       .createConversation()
       .then((conversation) => {
         setConversationId(conversation.id);
+        void refreshConversations();
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : String(err));
       });
   }
 
+  async function openConversation(id: string) {
+    if (isStreaming) {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      setStreaming(false);
+      setStatus(null);
+    }
+    setHistoryLoading(true);
+    setError(null);
+    try {
+      const items = await api.listMessages(id);
+      const loaded: ChatMessage[] = items.map((item) => ({
+        id: item.id,
+        role: item.role,
+        content: item.content,
+        sources: normalizeSources(item.sources),
+        model_name: item.model_name ?? null,
+      }));
+      setMessages(loaded);
+      setConversationId(id);
+      if (typeof window !== "undefined" && window.innerWidth <= 760) {
+        setHistoryOpen(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function renameConversation(id: string, title: string) {
+    try {
+      await api.renameConversation(id, title);
+      await refreshConversations();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function removeConversation(id: string) {
+    try {
+      await api.deleteConversation(id);
+      if (id === conversationId) {
+        newChat();
+      } else {
+        await refreshConversations();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   useEffect(() => {
     startConversation();
-    // Runs once on mount; startConversation only touches setState.
+    void refreshConversations();
+    // Runs once on mount; the helpers only touch state and the API client.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -210,6 +326,7 @@ export default function ChatPage() {
     } finally {
       finishMessage(assistantId);
       abortRef.current = null;
+      void refreshConversations();
     }
   }
 
@@ -316,6 +433,18 @@ export default function ChatPage() {
 
   return (
     <div className="chat-page">
+      <HistoryPanel
+        conversations={conversations}
+        activeId={conversationId}
+        loading={historyLoading}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onSelect={(id) => void openConversation(id)}
+        onCreate={newChat}
+        onRename={(id, title) => void renameConversation(id, title)}
+        onDelete={(id) => void removeConversation(id)}
+      />
+
       <header className="topbar">
         <Link href="/chat" className="assistant-pill">
           <span className="assistant-glyph">
@@ -329,6 +458,16 @@ export default function ChatPage() {
         <div className="topbar-title">Document Q&amp;A</div>
 
         <div className="topbar-actions">
+          <button
+            type="button"
+            className="history-toggle"
+            onClick={() => setHistoryOpen((open) => !open)}
+            aria-label="Lịch sử hội thoại"
+            aria-expanded={historyOpen}
+            title="Lịch sử hội thoại"
+          >
+            <HistoryIcon size={17} />
+          </button>
           <label className="model-pill">
             <span className="sr-only">Model</span>
             <select

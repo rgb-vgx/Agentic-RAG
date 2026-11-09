@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "test -x node_modules/.bin/next || npm ci --no-audit --no-fund --prefer-offline",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

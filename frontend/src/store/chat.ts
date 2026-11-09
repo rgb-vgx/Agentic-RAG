@@ -13,6 +13,7 @@ interface ChatState {
   error: string | null;
 
   setConversation: (id: string) => void;
+  setMessages: (messages: ChatMessage[]) => void;
   addUserMessage: (content: string) => void;
   beginAssistantMessage: () => string;
   appendToken: (messageId: string, delta: string) => void;
@@ -32,6 +33,8 @@ export const useChatStore = create<ChatState>((set) => ({
   error: null,
 
   setConversation: (id) => set({ conversationId: id }),
+
+  setMessages: (messages) => set({ messages }),
 
   addUserMessage: (content) =>
     set((state) => ({

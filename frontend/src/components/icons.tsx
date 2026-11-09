@@ -241,3 +241,24 @@ export function SparklesIcon({ className, size = 16 }: IconProps) {
     </svg>
   );
 }
+
+export function HistoryIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" />
+      <path d="M3.5 4.5v5h5" />
+      <path d="M12 8v4.5l3 1.8" />
+    </svg>
+  );
+}
