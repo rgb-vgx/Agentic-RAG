@@ -12,7 +12,14 @@ RUN pip install --no-cache-dir uv
 # Dependencies only: the project is not a distributable package
 # ([tool.uv] package = false), so --no-install-project is correct.
 COPY pyproject.toml ./
-RUN uv sync --no-dev --no-install-project
+# Docling is optional because it adds torch + layout/table/formula models
+# (~6 GB). Enable for workers that must ingest scientific PDFs.
+ARG INSTALL_DOCLING=false
+RUN if [ "$INSTALL_DOCLING" = "true" ]; then \
+        uv sync --no-dev --extra docling --no-install-project; \
+    else \
+        uv sync --no-dev --no-install-project; \
+    fi
 
 COPY . .
 ENV PATH="/app/.venv/bin:$PATH"

@@ -292,8 +292,22 @@ class DocxParser(BaseParser):
 PARSER_REGISTRY: dict[str, BaseParser] = {}
 
 
-def get_parser(file_type: str) -> BaseParser:
+def get_parser(
+    file_type: str, document_type: str | None = None
+) -> BaseParser:
     normalized = file_type.lower().lstrip(".")
+    if normalized == "pdf" and document_type == "scientific":
+        import importlib.util
+        import logging
+
+        if importlib.util.find_spec("docling") is not None:
+            from app.ingestion.docling_parser import DoclingParser
+
+            return DoclingParser()
+        logging.getLogger(__name__).warning(
+            "scientific PDF requested but Docling is not installed; "
+            "falling back to PyMuPDF"
+        )
     for parser in (PdfParser(), TxtParser(), DocxParser()):
         if normalized in parser.supported_types:
             return parser

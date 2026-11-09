@@ -87,6 +87,7 @@ class EmbeddingPipeline:
             "document_title": document.title,
             "document_number": document.document_number,
             "document_year": document.document_year,
+            "document_type": (document.run_metadata or {}).get("document_type"),
             "metadata_version": 1,
         }
         article_number, article_title = extract_article(chunk.heading_path)

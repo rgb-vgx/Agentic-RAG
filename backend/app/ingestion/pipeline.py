@@ -14,10 +14,11 @@ from app.domain.documents.entities import Document, DocumentStatus
 from app.infrastructure.vectorstores.sparse import SparseEncoder
 from app.ingestion.analyzer import DocumentAnalyzer
 from app.ingestion.chunking.selection import ChunkingSelector
+from app.ingestion.document_type import detect_document_type
 from app.ingestion.embedding import EmbeddingPipeline
 from app.ingestion.indexing import QdrantIndexer
-from app.ingestion.legal_metadata import extract_document_metadata
-from app.ingestion.parsers import get_parser
+from app.ingestion.legal_metadata import extract_document_metadata, normalize_text
+from app.ingestion.parsers import PdfParser, get_parser
 from app.ingestion.section_builder import SectionBuilder
 
 
@@ -47,17 +48,52 @@ class IngestionPipeline:
         try:
             document.status = DocumentStatus.PROCESSING
 
-            # 1. Parse → Canonical Document IR
-            parser = get_parser(document.file_type)
-            ir = parser.parse(file_bytes, document_id=str(document.id),
-                              filename=document.filename)
+            # 1. Parse → Canonical Document IR. Document type selects the
+            #    layout-aware parser for scientific/technical PDFs.
+            document_type = detect_document_type(
+                document.file_type, file_bytes, document.filename
+            )
+            document.run_metadata = {
+                **(document.run_metadata or {}),
+                "document_type": document_type,
+            }
+            parser = get_parser(document.file_type, document_type=document_type)
+            parser_fallback = False
+            try:
+                ir = parser.parse(
+                    file_bytes,
+                    document_id=str(document.id),
+                    filename=document.filename,
+                )
+            except Exception as exc:  # noqa: BLE001 - Docling is optional
+                if parser.name != "docling":
+                    raise
+                import logging
 
-            # Legal identity is needed for exact Điều/Khoản/Điểm lookup.
-            metadata = extract_document_metadata(document.filename, ir)
-            document.title = metadata.title
-            document.title_normalized = metadata.title_normalized
-            document.document_number = metadata.document_number
-            document.document_year = metadata.document_year
+                logging.getLogger(__name__).warning(
+                    "Docling failed, falling back to PyMuPDF: %s", exc
+                )
+                parser = PdfParser()
+                parser_fallback = True
+                ir = parser.parse(
+                    file_bytes,
+                    document_id=str(document.id),
+                    filename=document.filename,
+                )
+
+            if ir.metadata.get("document_type") == "scientific":
+                title = ir.metadata.get("title") or document.filename.rsplit(".", 1)[0]
+                document.title = title
+                document.title_normalized = normalize_text(title)
+                document.document_number = ir.metadata.get("arxiv_id")
+                document.document_year = ir.metadata.get("document_year")
+            else:
+                # Legal identity is needed for exact Điều/Khoản/Điểm lookup.
+                metadata = extract_document_metadata(document.filename, ir)
+                document.title = metadata.title
+                document.title_normalized = metadata.title_normalized
+                document.document_number = metadata.document_number
+                document.document_year = metadata.document_year
 
             # 2. Quality gate (Section 4.4) — runs before chunking
             quality_report = self.analyzer.analyze(ir)
@@ -140,6 +176,10 @@ class IngestionPipeline:
                 "chunk_set_id": chunk_set_id,
                 "strategy_runs": strategy_runs,
                 "processing_seconds": round(time.monotonic() - started, 2),
+                "document_type": document_type,
+                "parser_name": parser.name,
+                "parser_version": parser.version,
+                "parser_fallback": parser_fallback,
             }
             return document
         except Exception as exc:  # surface any pipeline failure to the API

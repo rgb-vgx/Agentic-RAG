@@ -152,7 +152,12 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   worker:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        # RAG_DOCLING_ENABLED=true rebuilds the worker with Docling for
+        # scientific/layout-heavy PDFs. The api image stays small.
+        INSTALL_DOCLING: ${RAG_DOCLING_ENABLED:-false}
     env_file: ./backend/.env.example
     environment:
       DATABASE_URL: postgresql+asyncpg://agentic:agentic@postgres:5432/agentic_rag
@@ -168,6 +173,12 @@ services:
       EMBEDDING_BASE_URL: ${RAG_EMBEDDING_BASE_URL:-http://host.docker.internal:11434/v1}
       EMBEDDING_QUERY_INSTRUCTION: "${RAG_EMBEDDING_QUERY_INSTRUCTION-Given a Vietnamese question, retrieve passages that answer the question}"
       QDRANT_COLLECTION: ${RAG_QDRANT_COLLECTION:-chunks_qwen3_8b}
+      # Optional scientific-PDF parser (only present when built with Docling).
+      DOCLING_DEVICE: ${RAG_DOCLING_DEVICE:-cpu}
+      DOCLING_OCR: "false"
+      HF_HOME: /models/hf
+    volumes:
+      - docling_cache:/models/hf
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -203,3 +214,4 @@ volumes:
   minio_data:
   tei_data:
   reranker_cache:
+  docling_cache:

@@ -86,3 +86,6 @@ class CanonicalDocument(BaseModel):
 
     parser_name: str = ""
     parser_version: str = ""
+
+    # Parser-specific document identity/type (e.g. scientific title, arxiv_id).
+    metadata: dict = Field(default_factory=dict)

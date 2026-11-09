@@ -42,6 +42,11 @@ dependencies = [
     "python-docx>=1.2.0",
 ]
 
+[project.optional-dependencies]
+# Layout-aware PDF parser for scientific/technical documents. Large
+# (torch + layout/table/formula models); not needed for the legal pipeline.
+docling = ["docling>=2.149.0"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3.0",
