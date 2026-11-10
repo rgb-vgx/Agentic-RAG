@@ -31,10 +31,24 @@ from app.services.chat_service import build_node_context
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
-    # Startup: external connections (DB, Qdrant, Redis) are established lazily
-    # by their owning modules so the app can boot without infrastructure.
+    # Optional durable LangGraph checkpoints. The saver owns a dedicated
+    # autocommit connection for the lifetime of the app.
+    app.state.checkpointer = None
+    if settings.langgraph_checkpointing:
+        try:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+            dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+            async with AsyncPostgresSaver.from_conn_string(dsn) as saver:
+                await saver.setup()
+                app.state.checkpointer = saver
+                yield
+            return
+        except Exception:  # noqa: BLE001 - checkpointing must not block boot
+            logging.getLogger(__name__).exception(
+                "LangGraph checkpointer unavailable; continuing without it"
+            )
     yield
-    # Shutdown: close pooled connections here when wiring is added.
 
 
 async def _db_is_active(principal: Principal) -> bool:

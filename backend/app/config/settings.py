@@ -184,6 +184,9 @@ class Settings(BaseSettings):
     # Agent limits
     agent_max_retrieval_iterations: int = 3
     agent_max_decomposition_tasks: int = 3
+    # Persist LangGraph checkpoints in the application Postgres (durable run
+    # state); off by default because it adds tables and per-node writes.
+    langgraph_checkpointing: bool = False
     # Summarize older conversation turns once they cross these limits.
     conversation_compact_keep_last: int = 8
     conversation_compact_max_chars: int = 16000

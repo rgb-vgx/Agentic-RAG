@@ -30,7 +30,7 @@ from app.domain.agents.state import AgentState, WorkflowLimits
 logger = logging.getLogger(__name__)
 
 
-def build_graph(ctx: NodeContext):
+def build_graph(ctx: NodeContext, checkpointer: Any | None = None):
     """Compile the agentic RAG StateGraph with the given dependencies."""
     workflow = StateGraph(AgentState)
 
@@ -80,7 +80,7 @@ def build_graph(ctx: NodeContext):
     workflow.add_edge("synthesize", "validate_citations")
     workflow.add_edge("validate_citations", END)
 
-    return workflow.compile()
+    return workflow.compile(checkpointer=checkpointer)
 
 
 def initial_state(
@@ -124,15 +124,15 @@ def initial_state(
     )
 
 
-async def stream_run(graph, state: AgentState):
+async def stream_run(graph, state: AgentState, config: dict | None = None):
     """Yield (event, payload) tuples from the graph stream.
 
     Events: status (node updates), done (final state). The final state is
-    accumulated from the update stream — the graph has no checkpointer, so
-    ``aget_state`` cannot be used here.
+    accumulated from the update stream; with a checkpointer the caller also
+    passes a thread_id config.
     """
     final_state: dict[str, Any] = dict(state)
-    async for step in graph.astream(state, stream_mode="updates"):
+    async for step in graph.astream(state, config=config, stream_mode="updates"):
         for node_name, update in step.items():
             if update:
                 final_state.update(update)

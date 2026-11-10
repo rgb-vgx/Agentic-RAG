@@ -199,7 +199,9 @@ async def chat(
         run_id = run.id
         await conversations.add_message(conversation_id, "user", body.query)
 
-    service = ChatService(ctx)
+    service = ChatService(
+        ctx, checkpointer=getattr(request.app.state, "checkpointer", None)
+    )
     snapshot_document_ids = sorted(str(key) for key in snapshot)
 
     async def persist(

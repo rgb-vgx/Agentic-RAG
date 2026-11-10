@@ -93,9 +93,10 @@ def build_node_context(provider: str, model: str) -> NodeContext:
 class ChatService:
     """Runs one agent query and yields SSE-ready events."""
 
-    def __init__(self, ctx: NodeContext):
+    def __init__(self, ctx: NodeContext, checkpointer: Any | None = None):
         self.ctx = ctx
-        self.graph = build_graph(ctx)
+        self.checkpointer = checkpointer
+        self.graph = build_graph(ctx, checkpointer=checkpointer)
         self.last_result: ChatRunResult | None = None
         self.last_error: str | None = None
 
@@ -208,7 +209,14 @@ class ChatService:
 
         try:
             final_state: dict[str, Any] = {}
-            stream = stream_run(self.graph, state).__aiter__()
+            graph_config = (
+                {"configurable": {"thread_id": run_id}}
+                if self.checkpointer is not None
+                else None
+            )
+            stream = stream_run(
+                self.graph, state, config=graph_config
+            ).__aiter__()
             pending: asyncio.Task | None = asyncio.create_task(anext(stream))
             last_node = "start"
             try:
