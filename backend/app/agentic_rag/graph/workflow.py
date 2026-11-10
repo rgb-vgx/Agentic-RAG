@@ -81,6 +81,7 @@ def initial_state(
     limits: WorkflowLimits | None = None,
     document_ids: list[str] | None = None,
     web_evidence: list[dict[str, Any]] | None = None,
+    fast_document_scope: bool = False,
 ) -> AgentState:
     """Seed state for one agent run (Section 10)."""
     limits = limits or WorkflowLimits()
@@ -91,6 +92,7 @@ def initial_state(
         conversation_id=conversation_id,
         user_query=user_query,
         snapshot_document_ids=document_ids,
+        fast_document_scope=fast_document_scope,
         conversation_context=conversation_context or [],
         resolved_query={},
         query_analysis={},

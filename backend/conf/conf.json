@@ -44,8 +44,8 @@
   "rerank_enabled": true,
   "rerank_url": "http://localhost:8083",
   "rerank_path": "/rerank",
-  "rerank_candidates": 50,
-  "rerank_top_n": 10,
+  "rerank_candidates": 20,
+  "rerank_top_n": 8,
   "rerank_instruction": "Given a Vietnamese question, retrieve passages that answer the question",
   "rerank_max_concurrency": 4,
 

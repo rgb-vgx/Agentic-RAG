@@ -144,8 +144,8 @@ class Settings(BaseSettings):
     rerank_url: str | None = None
     rerank_path: str = "/rerank"
     rerank_timeout_seconds: float = 300.0
-    rerank_candidates: int = 50
-    rerank_top_n: int = 10
+    rerank_candidates: int = 20
+    rerank_top_n: int = 8
     # Instruction shown to Qwen3-Reranker (English, per the model card).
     rerank_instruction: str = (
         "Given a Vietnamese question, retrieve passages that answer the question"

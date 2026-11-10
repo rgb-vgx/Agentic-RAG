@@ -88,24 +88,68 @@ class NodeContext:
 # ---------------------------------------------------------------------------
 
 
+def _looks_complex_query(query: str) -> bool:
+    folded = query.lower()
+    return any(
+        marker in folded
+        for marker in (
+            "so sánh",
+            "khác nhau",
+            "liệt kê",
+            "tất cả",
+            "nhiều tài liệu",
+            "bảng",
+            "multi",
+            "compare",
+        )
+    )
+
+
 async def resolve_context_node(state: AgentState, ctx: NodeContext) -> dict:
     """Conversation context resolution → ResolvedQuery (Section 8.2)."""
     async with trace_node("resolve_context", run_id=state.get("run_id")) as span:
-        resolved = await ctx.resolver.resolve(
-            state.get("conversation_context", []),
-            state.get("user_query", ""),
-        )
-        span["output"] = {"standalone_query": resolved.standalone_query}
+        if (
+            state.get("fast_document_scope")
+            and not state.get("conversation_context")
+        ):
+            from app.domain.retrieval.types import ResolvedQuery
+
+            query = state.get("user_query", "")
+            resolved = ResolvedQuery(
+                original_query=query,
+                standalone_query=query,
+            )
+        else:
+            resolved = await ctx.resolver.resolve(
+                state.get("conversation_context", []),
+                state.get("user_query", ""),
+            )
+        span["output"] = {
+            "standalone_query": resolved.standalone_query,
+            "fast_scope": bool(state.get("fast_document_scope")),
+        }
         return {"resolved_query": resolved.model_dump()}
 
 
 async def analyze_node(state: AgentState, ctx: NodeContext) -> dict:
     """Query analysis → QueryAnalysis (Section 6.3)."""
     async with trace_node("analyze", run_id=state.get("run_id")) as span:
+        from app.domain.agents.state import QueryAnalysis
         from app.domain.retrieval.types import ResolvedQuery
 
         resolved = ResolvedQuery(**state["resolved_query"])
-        analysis = await ctx.analyzer.analyze(resolved)
+        if (
+            state.get("fast_document_scope")
+            and not state.get("conversation_context")
+            and not _looks_complex_query(state.get("user_query", ""))
+        ):
+            analysis = QueryAnalysis(
+                query_type="simple_fact",
+                complexity="low",
+                requires_history=False,
+            )
+        else:
+            analysis = await ctx.analyzer.analyze(resolved)
         span["output"] = analysis.model_dump()
         return {"query_analysis": analysis.model_dump()}
 
@@ -244,7 +288,14 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
 
             # Rerank whenever a reranker is configured; do not rely on the
             # planner's `requires_reranking` flag alone.
-            if ctx.rerank_tool.reranker is not None and evidence:
+            if (
+                ctx.rerank_tool.reranker is not None
+                and evidence
+                and not (
+                    state.get("fast_document_scope")
+                    and plan.complexity == "low"
+                )
+            ):
                 evidence = await ctx.rerank_tool.run(
                     task.query, evidence, top_k=ctx.limits.rerank_top_n
                 )
@@ -342,6 +393,27 @@ async def evaluate_node(state: AgentState, ctx: NodeContext) -> dict:
                 "iteration_count": state.get("iteration_count", 0) + 1,
             }
         groups = [EvidenceGroup(**g) for g in state.get("evidence_groups", [])]
+        if (
+            state.get("fast_document_scope")
+            and state.get("query_analysis", {}).get("complexity") == "low"
+        ):
+            has_evidence = any(group.evidence for group in groups)
+            status = (
+                EvidenceStatus.SUFFICIENT.value
+                if has_evidence
+                else EvidenceStatus.INSUFFICIENT.value
+            )
+            for group in groups:
+                group.status = EvidenceStatus(status)
+            span["output"] = {"status": status, "fast_scope": True}
+            return {
+                "evidence_groups": [g.model_dump(mode="json") for g in groups],
+                "evidence_status": status,
+                "missing_information": [],
+                "contradictions": [],
+                "iteration_count": state.get("iteration_count", 0) + 1,
+            }
+
         statuses: list[str] = []
         missing: list[str] = []
         contradictions: list[str] = []

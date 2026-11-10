@@ -23,6 +23,8 @@ class AgentState(TypedDict, total=False):
     # Documents the caller may retrieve from, resolved from Postgres before
     # the run starts. None = legacy/unrestricted (tests); [] = no access.
     snapshot_document_ids: list[str] | None
+    # A single explicitly tagged document: skip the slow LLM utility nodes.
+    fast_document_scope: bool
 
     conversation_context: list[dict[str, Any]]
 

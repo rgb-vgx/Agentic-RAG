@@ -158,6 +158,7 @@ class ChatService:
             limits=self.ctx.limits,
             document_ids=document_ids,
             web_evidence=web_evidence,
+            fast_document_scope=bool(document_ids) and len(document_ids) == 1,
         )
 
         try:
