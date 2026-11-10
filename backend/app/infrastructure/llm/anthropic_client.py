@@ -41,6 +41,18 @@ class AnthropicClient(BaseLLMClient):
         self._client = AsyncAnthropic(**kwargs)
         self._default_model = default_model or settings.anthropic_chat_model
 
+    @staticmethod
+    def _system_payload(system: str):
+        if settings.anthropic_prompt_caching and system:
+            return [
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        return system or None
+
     def _extra_body(self, temperature: float) -> dict:
         """Fields the SDK 2.x signature no longer exposes.
 
@@ -72,7 +84,7 @@ class AnthropicClient(BaseLLMClient):
         # prompts already ask for JSON and complete_json() extracts it.
         response = await self._client.messages.create(
             model=model or self._default_model,
-            system=system or None,
+            system=self._system_payload(system),
             messages=conversation,
             max_tokens=max_tokens,
             extra_body=self._extra_body(temperature),
@@ -104,7 +116,7 @@ class AnthropicClient(BaseLLMClient):
 
         async with self._client.messages.stream(
             model=model or self._default_model,
-            system=system or None,
+            system=self._system_payload(system),
             messages=conversation,
             max_tokens=max_tokens,
             extra_body=self._extra_body(temperature),

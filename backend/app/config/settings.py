@@ -110,6 +110,8 @@ class Settings(BaseSettings):
     # Optional extended-thinking fields forwarded to the provider.
     anthropic_thinking_type: str | None = None   # e.g. "adaptive"
     anthropic_output_effort: str | None = None   # e.g. "high"
+    # Enable only when the proxy/provider supports Anthropic prompt caching.
+    anthropic_prompt_caching: bool = False
     # Ollama/Qwen "thinking" models spend the token budget on reasoning and
     # return empty content unless this is "none".
     openai_reasoning_effort: str | None = None

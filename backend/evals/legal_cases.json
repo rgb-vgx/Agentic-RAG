@@ -87,5 +87,49 @@
       "người tham gia tố tụng"
     ],
     "max_latency_ms": 60000
+  },
+  {
+    "id": "blttds-thoi-hieu",
+    "question": "Thời hiệu khởi kiện vụ án dân sự được quy định thế nào?",
+    "expected_documents": [
+      "92_2015_QH13_296861.docx"
+    ],
+    "required_terms": [
+      "thời hiệu"
+    ],
+    "max_latency_ms": 60000
+  },
+  {
+    "id": "blhs-tuoi-trach-nhiem",
+    "question": "Độ tuổi chịu trách nhiệm hình sự theo Bộ luật hình sự là bao nhiêu?",
+    "expected_documents": [
+      "Bộ-luật-100-2015-QH13.docx"
+    ],
+    "required_terms": [
+      "tuổi"
+    ],
+    "max_latency_ms": 60000
+  },
+  {
+    "id": "nghi-quyet-doi-tuong",
+    "question": "Nghị quyết áp dụng cho những đối tượng nào?",
+    "expected_documents": [
+      "nghi-quyet.docx"
+    ],
+    "required_terms": [
+      "áp dụng"
+    ],
+    "max_latency_ms": 60000
+  },
+  {
+    "id": "blttds-an-phi",
+    "question": "Án phí trong tố tụng dân sự được quy định ra sao?",
+    "expected_documents": [
+      "92_2015_QH13_296861.docx"
+    ],
+    "required_terms": [
+      "án phí"
+    ],
+    "max_latency_ms": 60000
   }
 ]
