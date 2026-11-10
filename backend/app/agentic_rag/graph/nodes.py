@@ -9,6 +9,7 @@ Node flow:
     evaluate → (loop | synthesize)] → validate_citations → persist
 """
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -263,8 +264,9 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
             }
 
         query_vector = await ctx.embedder.embed_query(query_text)
-        groups: list[EvidenceGroup] = []
-        for task in plan.retrieval_tasks:
+        rerank_slots = asyncio.Semaphore(2)
+
+        async def retrieve_one(task) -> EvidenceGroup:
             if snapshot is not None and not snapshot:
                 evidence = []
             else:
@@ -275,7 +277,7 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
                     limit=ctx.limits.retrieval_candidates,
                     document_ids=snapshot,
                 )
-                # Re-embed sub-query for tasks that differ from the main query
+                # Re-embed sub-query for tasks that differ from the main query.
                 if task.query != resolved.get("standalone_query"):
                     sub_vector = await ctx.embedder.embed_query(task.query)
                     evidence = await ctx.hybrid_tool.run(
@@ -286,8 +288,8 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
                         document_ids=snapshot,
                     )
 
-            # Rerank whenever a reranker is configured; do not rely on the
-            # planner's `requires_reranking` flag alone.
+            # Rerank whenever configured, with a small concurrency cap so the
+            # GPU reranker is not hit by every sub-query at once.
             if (
                 ctx.rerank_tool.reranker is not None
                 and evidence
@@ -296,9 +298,10 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
                     and plan.complexity == "low"
                 )
             ):
-                evidence = await ctx.rerank_tool.run(
-                    task.query, evidence, top_k=ctx.limits.rerank_top_n
-                )
+                async with rerank_slots:
+                    evidence = await ctx.rerank_tool.run(
+                        task.query, evidence, top_k=ctx.limits.rerank_top_n
+                    )
 
             if plan.requires_context_expansion and evidence:
                 expanded = await ctx.expansion_tool.run(
@@ -306,13 +309,19 @@ async def retrieve_node(state: AgentState, ctx: NodeContext) -> dict:
                 )
                 evidence = evidence + expanded
 
-            groups.append(
-                EvidenceGroup(
-                    task_id=task.task_id,
-                    query=task.query,
-                    evidence=evidence,
-                )
+            return EvidenceGroup(
+                task_id=task.task_id,
+                query=task.query,
+                evidence=evidence,
             )
+
+        # Sub-queries are independent: run them concurrently and preserve
+        # planner order for the evidence pack.
+        groups = list(
+            await asyncio.gather(
+                *(retrieve_one(task) for task in plan.retrieval_tasks)
+            )
+        )
 
         # Mixed query: preserve structural candidates ahead of semantic ones.
         if exact_evidence and groups:

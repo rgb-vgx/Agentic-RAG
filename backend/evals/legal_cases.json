@@ -1,0 +1,58 @@
+[
+  {
+    "id": "blttds-pham-vi",
+    "question": "Bộ luật tố tụng dân sự điều chỉnh những quan hệ nào?",
+    "expected_documents": ["Bộ-luật-100-2015-QH13.docx"],
+    "required_terms": ["tố tụng dân sự"],
+    "max_latency_ms": 60000
+  },
+  {
+    "id": "blttds-nguyen-tac",
+    "question": "Các nguyên tắc cơ bản của tố tụng dân sự là gì?",
+    "expected_documents": ["Bộ-luật-100-2015-QH13.docx"],
+    "required_terms": ["nguyên tắc"],
+    "max_latency_ms": 60000
+  },
+  {
+    "id": "blhs-toi-pham",
+    "question": "Tội phạm được định nghĩa như thế nào?",
+    "expected_documents": ["92_2015_QH13_296861.docx"],
+    "required_terms": ["tội phạm"],
+    "max_latency_ms": 60000
+  },
+  {
+    "id": "blhs-hinh-phat",
+    "question": "Các hình phạt chính trong Bộ luật hình sự gồm những gì?",
+    "expected_documents": ["92_2015_QH13_296861.docx"],
+    "required_terms": ["hình phạt"],
+    "max_latency_ms": 60000
+  },
+  {
+    "id": "nghi-quyet-hieu-luc",
+    "question": "Nghị quyết có hiệu lực khi nào?",
+    "expected_documents": ["nghi-quyet.docx"],
+    "required_terms": ["hiệu lực"],
+    "max_latency_ms": 60000
+  },
+  {
+    "id": "dan-su-tham-quyen",
+    "question": "Những tranh chấp dân sự nào thuộc thẩm quyền giải quyết của Tòa án?",
+    "expected_documents": ["Bộ-luật-100-2015-QH13.docx"],
+    "required_terms": ["thẩm quyền", "Tòa án"],
+    "max_latency_ms": 60000
+  },
+  {
+    "id": "kinh-doanh-tham-quyen",
+    "question": "Tranh chấp kinh doanh, thương mại thuộc thẩm quyền của Tòa án nào?",
+    "expected_documents": ["Bộ-luật-100-2015-QH13.docx"],
+    "required_terms": ["kinh doanh", "thương mại"],
+    "max_latency_ms": 60000
+  },
+  {
+    "id": "nguoi-tham-gia-to-tung",
+    "question": "Người tham gia tố tụng gồm những ai?",
+    "expected_documents": ["Bộ-luật-100-2015-QH13.docx"],
+    "required_terms": ["người tham gia tố tụng"],
+    "max_latency_ms": 60000
+  }
+]

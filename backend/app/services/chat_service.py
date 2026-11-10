@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Any
 
+from app.agentic_rag.context import compact_context
 from app.agentic_rag.graph.nodes import NodeContext
 from app.agentic_rag.graph.workflow import build_graph, initial_state, stream_run
 from app.agentic_rag.intents import Intent, detect_intent, direct_answer
@@ -119,6 +120,7 @@ class ChatService:
             Intent.SMALLTALK,
             Intent.META,
             Intent.DOCUMENT_LIST,
+            Intent.DOCUMENT_ACTION,
         } or (intent.intent is Intent.OUT_OF_SCOPE and not web_evidence)
         if direct:
             answer = direct_answer(intent.intent, self.ctx.documents)
@@ -147,6 +149,23 @@ class ChatService:
                 },
             )
             return
+
+        context = conversation_context or []
+        compacted = await compact_context(
+            self.ctx.llm,
+            context,
+            keep_last=settings.conversation_compact_keep_last,
+            max_chars=settings.conversation_compact_max_chars,
+        )
+        if len(compacted) != len(context):
+            yield _sse(
+                "status",
+                {
+                    "node": "compact_context",
+                    "update": {"kept_messages": len(compacted)},
+                },
+            )
+        conversation_context = compacted
 
         state = initial_state(
             run_id=run_id,

@@ -7,6 +7,8 @@ Streaming: the service layer calls `graph.astream(...)` and forwards node
 updates as SSE frames (status events) plus synthesizer token deltas.
 """
 
+import logging
+from time import perf_counter
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -25,6 +27,8 @@ from app.agentic_rag.graph.nodes import (
 )
 from app.domain.agents.state import AgentState, WorkflowLimits
 
+logger = logging.getLogger(__name__)
+
 
 def build_graph(ctx: NodeContext):
     """Compile the agentic RAG StateGraph with the given dependencies."""
@@ -33,7 +37,16 @@ def build_graph(ctx: NodeContext):
     # Nodes take only state; ctx is closed over via partial-style wrappers
     def node(fn):
         async def wrapper(state: AgentState) -> dict:
-            return await fn(state, ctx)
+            started = perf_counter()
+            try:
+                return await fn(state, ctx)
+            finally:
+                logger.info(
+                    "node_timing node=%s duration_ms=%d run_id=%s",
+                    fn.__name__,
+                    int((perf_counter() - started) * 1000),
+                    state.get("run_id", ""),
+                )
 
         wrapper.__name__ = fn.__name__
         return wrapper

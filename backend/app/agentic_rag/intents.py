@@ -20,6 +20,7 @@ class Intent(StrEnum):
     META = "meta"
     OUT_OF_SCOPE = "out_of_scope"
     DOCUMENT_LIST = "document_list"
+    DOCUMENT_ACTION = "document_action"
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,15 @@ _DOCUMENT_LIST_PATTERNS = (
     "xem tai lieu",
     "kho tai lieu",
 )
+_DOCUMENT_ACTION_PATTERNS = (
+    "xoa tai lieu",
+    "xoa file",
+    "doi ten tai lieu",
+    "doi ten file",
+    "tai len tai lieu",
+    "upload tai lieu",
+    "them tai lieu",
+)
 
 
 def detect_intent(query: str) -> IntentResult:
@@ -97,6 +107,8 @@ def detect_intent(query: str) -> IntentResult:
         return IntentResult(Intent.SMALLTALK, "greeting")
     if any(pattern in folded for pattern in _META_PATTERNS):
         return IntentResult(Intent.META, "capability/help")
+    if any(pattern in folded for pattern in _DOCUMENT_ACTION_PATTERNS):
+        return IntentResult(Intent.DOCUMENT_ACTION, "mutating document command")
     if any(pattern in folded for pattern in _DOCUMENT_LIST_PATTERNS):
         return IntentResult(Intent.DOCUMENT_LIST, "document inventory")
     if any(pattern in folded for pattern in _OUT_OF_SCOPE_PATTERNS):
@@ -120,6 +132,11 @@ def direct_answer(intent: Intent, documents: list[dict]) -> str:
         return (
             "Câu này nằm ngoài phạm vi tài liệu hiện có. Mình chỉ trả lời dựa "
             "trên kho tài liệu; nếu muốn tìm thông tin bên ngoài, hãy bật nút Web."
+        )
+    if intent is Intent.DOCUMENT_ACTION:
+        return (
+            "Mình không thực hiện thay đổi tài liệu trực tiếp từ chat. "
+            "Hãy mở trang Tài liệu để xoá/đổi tên/tải lên và xác nhận thao tác."
         )
     if intent is Intent.DOCUMENT_LIST:
         if not documents:

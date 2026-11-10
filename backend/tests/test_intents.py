@@ -20,6 +20,12 @@ def test_weather_out_of_scope():
     assert detect_intent("Thời tiết hôm nay thế nào?").intent is Intent.OUT_OF_SCOPE
 
 
+def test_mutating_document_command_is_blocked_with_approval_message():
+    intent = detect_intent("Xóa tài liệu nghi-quyet.docx")
+    assert intent.intent is Intent.DOCUMENT_ACTION
+    assert "trang Tài liệu" in direct_answer(intent.intent, [])
+
+
 def test_document_question_stays_qa():
     assert detect_intent("Điều 19 Bộ luật tố tụng dân sự là gì?").intent is Intent.DOCUMENT_QA
 
