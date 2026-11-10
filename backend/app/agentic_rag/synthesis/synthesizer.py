@@ -5,6 +5,7 @@ deltas for SSE; non-streaming mode is used by internal nodes and tests.
 """
 
 from app.agentic_rag import prompts
+from app.config import settings
 from app.domain.retrieval.types import EvidenceGroup, RetrievedEvidence
 from app.infrastructure.llm.base import BaseLLMClient, LLMMessage
 
@@ -32,7 +33,7 @@ class AnswerSynthesizer:
         response = await self.llm.complete(
             self.build_messages(query, evidence_groups),
             temperature=0.2,
-            max_tokens=4096,
+            max_tokens=settings.synthesis_max_tokens,
         )
         return response.content
 
@@ -43,7 +44,7 @@ class AnswerSynthesizer:
         async for delta in self.llm.stream(
             self.build_messages(query, evidence_groups),
             temperature=0.2,
-            max_tokens=4096,
+            max_tokens=settings.synthesis_max_tokens,
         ):
             yield delta
 

@@ -232,6 +232,11 @@ export default function ChatPage() {
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionStart, setMentionStart] = useState(0);
   const [mentionIndex, setMentionIndex] = useState(0);
+  const [pendingApproval, setPendingApproval] = useState<{
+    action: "delete_document";
+    documentId: string;
+    filename: string;
+  } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -423,6 +428,7 @@ export default function ChatPage() {
 
     setInput("");
     setError(null);
+    setPendingApproval(null);
     setStatusDetail("");
     setStatusUpdate({});
     setStreaming(true);
@@ -467,6 +473,15 @@ export default function ChatPage() {
               const citation = event.data as SourceReference;
               collectedSources.push(citation);
               setCitations(assistantId, [citation]);
+              break;
+            }
+            case "approval": {
+              const approval = event.data;
+              setPendingApproval({
+                action: approval.action,
+                documentId: approval.document_id,
+                filename: approval.filename,
+              });
               break;
             }
             case "completed":
@@ -534,6 +549,22 @@ export default function ChatPage() {
       field.focus();
       field.setSelectionRange(position, position);
     }, 0);
+  }
+
+  async function confirmApproval() {
+    if (!pendingApproval) return;
+    try {
+      await api.deleteDocument(pendingApproval.documentId);
+      setDocuments((current) =>
+        current.filter((doc) => doc.id !== pendingApproval.documentId)
+      );
+      setMentionedDocs((current) =>
+        current.filter((doc) => doc.id !== pendingApproval.documentId)
+      );
+      setPendingApproval(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   function removeMention(doc: DocumentItem) {
@@ -914,6 +945,33 @@ export default function ChatPage() {
         </div>
       )}
 
+      {pendingApproval && (
+        <div className="approval-card" role="alertdialog" aria-live="assertive">
+          <div>
+            <strong>Xác nhận xoá tài liệu</strong>
+            <p>
+              Agent yêu cầu xoá <b>{pendingApproval.filename}</b>. Thao tác này
+              không thể hoàn tác.
+            </p>
+          </div>
+          <div className="approval-actions">
+            <button
+              type="button"
+              className="danger"
+              onClick={() => void confirmApproval()}
+            >
+              Xoá
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setPendingApproval(null)}
+            >
+              Huỷ
+            </button>
+          </div>
+        </div>
+      )}
       {composer}
     </div>
   );

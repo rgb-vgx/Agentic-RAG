@@ -99,6 +99,15 @@ export type StreamEvent =
   | { event: "token"; data: { delta: string } }
   | { event: "citation"; data: SourceReference }
   | {
+      event: "approval";
+      data: {
+        action: "delete_document";
+        document_id: string;
+        filename: string;
+        message?: string;
+      };
+    }
+  | {
       event: "completed";
       data: { run_id: string; routing_path?: string; citations?: number };
     }

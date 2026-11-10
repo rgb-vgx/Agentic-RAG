@@ -190,6 +190,9 @@ class Settings(BaseSettings):
     # prompt is truncated from the start (losing the system prompt and the
     # best-ranked evidence), so cap the prompt instead.
     synthesis_max_evidence_per_group: int = 8
+    # Answer budget; reasoning models still consume tokens before text, so
+    # 2048 is a compromise between truncation and latency.
+    synthesis_max_tokens: int = 2048
 
     @field_validator("cors_origins", mode="before")
     @classmethod

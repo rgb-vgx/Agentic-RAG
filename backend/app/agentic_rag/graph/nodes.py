@@ -516,7 +516,9 @@ async def synthesize_node(state: AgentState, ctx: NodeContext) -> dict:
                 )
             )
             retry = await ctx.llm.complete(
-                messages, temperature=0.0, max_tokens=4096
+                messages,
+                temperature=0.0,
+                max_tokens=settings.synthesis_max_tokens,
             )
             if re.search(r"\[R\d+\]", retry.content):
                 answer = retry.content

@@ -19,7 +19,12 @@ from typing import Any
 from app.agentic_rag.context import compact_context
 from app.agentic_rag.graph.nodes import NodeContext
 from app.agentic_rag.graph.workflow import build_graph, initial_state, stream_run
-from app.agentic_rag.intents import Intent, detect_intent, direct_answer
+from app.agentic_rag.intents import (
+    Intent,
+    detect_intent,
+    direct_answer,
+    parse_document_action,
+)
 from app.agentic_rag.retrieval.tools import RerankTool
 from app.config import settings
 from app.domain.agents.state import WorkflowLimits
@@ -123,13 +128,34 @@ class ChatService:
             Intent.DOCUMENT_ACTION,
         } or (intent.intent is Intent.OUT_OF_SCOPE and not web_evidence)
         if direct:
-            answer = direct_answer(intent.intent, self.ctx.documents)
+            action = (
+                parse_document_action(user_query, self.ctx.documents)
+                if intent.intent is Intent.DOCUMENT_ACTION
+                else None
+            )
+            if action is not None:
+                answer = (
+                    f"Mình cần bạn xác nhận trước khi xoá “{action.filename}”. "
+                    "Thao tác này không thể hoàn tác."
+                )
+            else:
+                answer = direct_answer(intent.intent, self.ctx.documents)
             yield _sse(
                 "status",
                 {"node": "intent", "update": {"intent": intent.intent.value}},
             )
             for index in range(0, len(answer), 40):
                 yield _sse("token", {"delta": answer[index : index + 40]})
+            if action is not None:
+                yield _sse(
+                    "approval",
+                    {
+                        "action": action.action,
+                        "document_id": action.document_id,
+                        "filename": action.filename,
+                        "message": answer,
+                    },
+                )
             result = ChatRunResult(
                 answer=answer,
                 citations=[],

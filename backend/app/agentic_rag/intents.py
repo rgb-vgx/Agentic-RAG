@@ -29,6 +29,13 @@ class IntentResult:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class DocumentAction:
+    action: str
+    document_id: str
+    filename: str
+
+
 def _fold(text: str) -> str:
     value = unicodedata.normalize("NFKD", text or "")
     value = "".join(ch for ch in value if not unicodedata.combining(ch))
@@ -114,6 +121,27 @@ def detect_intent(query: str) -> IntentResult:
     if any(pattern in folded for pattern in _OUT_OF_SCOPE_PATTERNS):
         return IntentResult(Intent.OUT_OF_SCOPE, "outside document scope")
     return IntentResult(Intent.DOCUMENT_QA)
+
+
+def parse_document_action(
+    query: str, documents: list[dict]
+) -> DocumentAction | None:
+    """Resolve an explicit delete command to one visible document."""
+    folded = _fold(query)
+    if not any(pattern in folded for pattern in ("xoa tai lieu", "xoa file")):
+        return None
+    for item in documents:
+        filename = str(item.get("filename") or "")
+        if not filename:
+            continue
+        stem = filename.rsplit(".", 1)[0]
+        if _fold(filename) in folded or _fold(stem) in folded:
+            return DocumentAction(
+                action="delete_document",
+                document_id=str(item.get("id")),
+                filename=filename,
+            )
+    return None
 
 
 def direct_answer(intent: Intent, documents: list[dict]) -> str:

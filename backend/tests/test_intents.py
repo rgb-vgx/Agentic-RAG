@@ -1,6 +1,11 @@
 """Conversational intent routing."""
 
-from app.agentic_rag.intents import Intent, detect_intent, direct_answer
+from app.agentic_rag.intents import (
+    Intent,
+    detect_intent,
+    direct_answer,
+    parse_document_action,
+)
 
 
 def test_greeting_is_smalltalk():
@@ -24,6 +29,16 @@ def test_mutating_document_command_is_blocked_with_approval_message():
     intent = detect_intent("Xóa tài liệu nghi-quyet.docx")
     assert intent.intent is Intent.DOCUMENT_ACTION
     assert "trang Tài liệu" in direct_answer(intent.intent, [])
+
+
+def test_delete_command_resolves_a_visible_document():
+    action = parse_document_action(
+        "Xóa tài liệu nghi-quyet.docx",
+        [{"id": "doc-1", "filename": "nghi-quyet.docx"}],
+    )
+    assert action is not None
+    assert action.action == "delete_document"
+    assert action.document_id == "doc-1"
 
 
 def test_document_question_stays_qa():
