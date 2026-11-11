@@ -217,7 +217,13 @@ class ChatService:
             stream = stream_run(
                 self.graph, state, config=graph_config
             ).__aiter__()
-            pending: asyncio.Task | None = asyncio.create_task(anext(stream))
+
+            # asyncio.create_task requires a coroutine; anext() is only an
+            # Awaitable, so wrap it once and reuse the coroutine wrapper.
+            async def next_event():
+                return await anext(stream)
+
+            pending: asyncio.Task | None = asyncio.create_task(next_event())
             last_node = "start"
             try:
                 while pending is not None:
@@ -241,7 +247,7 @@ class ChatService:
                     except StopAsyncIteration:
                         pending = None
                         break
-                    pending = asyncio.create_task(anext(stream))
+                    pending = asyncio.create_task(next_event())
                     if event == "status":
                         last_node = payload.get("node", last_node)
                         yield _sse("status", payload)
